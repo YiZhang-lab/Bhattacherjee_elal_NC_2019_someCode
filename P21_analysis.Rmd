@@ -1,0 +1,3541 @@
+---
+title: "Map the P21 cells on the adult mPFC data"
+author: "Mohamed Nadhir Djekidel"
+date: "August 23, 2018"
+output: html_document
+---
+
+
+# Load libraries
+
+```{r}
+require(Seurat)
+require(stringr)
+
+```
+
+# Fit the Adult PFC to the P21 mPFC data
+
+```{r}
+P21_cellRangerPaths <- list(
+  P21Sample1 = "../../../20180226_10x_PFC_P21/PFC_P21_batch1/",
+  #P21Sample2 = "../../../20180221_10x_PFC_P21/PFC_P21_spikein/",
+  P21Sample2 = "../../../12102018_P21_Merged_all/PFC_P21_D4/",
+  P21Sample3 = "../../../12102018_P21_Merged_all/PFC_P21_D5/"
+  )
+```
+
+### Create Seurate objects 
+
+```{r}
+P21_sobjPerSample <- list()
+
+for(smp in names(P21_cellRangerPaths)){
+  message(smp)
+  if(!is.null(P21_cellRangerPaths[[smp]]) & dir.exists(P21_cellRangerPaths[[smp]])){
+    P21_sobjPerSample[[smp]] <- createSeurateObj10x(dataPath = P21_cellRangerPaths[[smp]], minGene = 0,
+                                                sampleName = smp,mincells = 0)
+    P21_sobjPerSample[[smp]] = RenameCells(P21_sobjPerSample[[smp]],add.cell.id = smp)
+    P21_sobjPerSample[[smp]]@meta.data$Sample = smp
+  }
+}
+
+PFC_P21_sobj = P21_sobjPerSample$P21Sample1
+#rm(P21_sobjPerSample)
+PFC_P21_sobj
+```
+
+# Merge samples 
+
+```{r}
+PFC_P21_sobj <- NULL
+
+
+for(i in 1:(length(names(P21_sobjPerSample))-1)){
+  j=i+1
+  message(paste("Merging with",names(P21_sobjPerSample)[j]))
+  if(i==1){
+
+                                  object2 = P21_sobjPerSample[[j ]],
+                                   scale.factor = 1e6,
+                                   do.scale = F,
+                                   do.center = F,
+                                    do.normalize = F)
+  }else{
+
+    normalize <- ifelse(j==length(names(P21_sobjPerSample)),TRUE,FALSE)
+    PFC_P21_sobj <- MergeSeurat(object1 = PFC_P21_sobj,object2 = P21_sobjPerSample[[ j ]],
+                                   scale.factor = 1e6,
+                                   do.scale = F,
+                                   do.center = F,
+                                   do.normalize = normalize)
+  }
+  print(table(str_match(rownames(PFC_P21_sobj@meta.data),pattern = "(\\w+)_(\\w+)")[,2]))
+}
+
+PFC_P21_sobj
+```
+
+
+# Check the number of Genes-per cell distribution
+
+```{r fig.height=3, fig.width=10}
+plot(density(PFC_P21_sobj@meta.data$nGene),col="black",lwd=2)
+ abline(v =  c(800,1500),col="red",lty=2)
+```
+
+# Filter cells with less than 800 genes
+
+```{r}
+PFC_P21_sobj = SubsetData(PFC_P21_sobj,subset.name = "nGene",accept.low = 800,subset.raw = T)
+PFC_P21_sobj
+```
+
+
+
+
+```{r}
+PFC_P21_sobj <- removeMitoandRiboGenes_raw(PFC_P21_sobj)
+PFC_P21_sobj <- NormalizeData(PFC_P21_sobj,scale.factor = 1e6,display.progress = T)
+PFC_P21_sobj@meta.data$DevStage <- "P21"
+PFC_P21_sobj <- ScaleData(PFC_P21_sobj,vars.to.regress = c("nUMI","percent.mito"),do.scale = T,do.center = T)
+PFC_P21_sobj <- FindVariableGenes(PFC_P21_sobj,y.cutoff = 1)
+length(PFC_P21_sobj@var.genes)
+```
+
+
+```{r}
+PFC_P21_sobj <- RunPCA(PFC_P21_sobj,pcs.compute = 30,do.print = FALSE,pc.genes = PFC_P21_sobj@var.genes)
+PFC_P21_sobj <- JackStraw(PFC_P21_sobj,num.pc = 30)
+JackStrawPlot(PFC_P21_sobj,PCs = 1:30)
+```
+
+
+# check correlation with technical factors
+
+```{r}
+P21_se = Convert(PFC_P21_sobj,to = "sce")
+scater::plotExplanatoryPCs(P21_se)
+```
+
+
+```{r}
+PFC_P21_sobj <- RunTSNE(PFC_P21_sobj,dims.use = c(1,3:13),do.fast = T,perplexity=20)
+TSNEPlot(PFC_P21_sobj,pt.size = 0.5)
+```
+
+
+
+```{r fig.height=10, fig.width=4}
+FeaturePlot(PFC_P21_sobj,c("Snap25","Slc17a7","Gad2",
+                                          "Flt1", #Endo
+                                          "Aspa", # Oligo
+                                          "Gja1", #Astro
+                                          "Neu4", #NF oligo
+                                          "Pdgfra", #opc
+                                          "C1qa",
+                                          "Cldn5"#,
+                                          #"Cd24a",
+                                          #"Pou3f1","Syt6","Tshz2"
+                                          ),
+            cols.use = c("grey80","#B71B1BFF"),
+            pt.size = 0.2,nCol = 2)
+```
+
+```{r}
+PFC_P21_sobj <- FindClusters(PFC_P21_sobj, dims.use = c(1,3:13),resolution = 3)
+PFC_P21_sobj <- BuildClusterTree(PFC_P21_sobj,do.reorder = T,reorder.numeric = T)
+PlotClusterTree(PFC_P21_sobj)
+```
+
+
+```{r}
+TSNEPlot(PFC_P21_sobj,do.label = T, colors.use = generateColors(33),label.size = 5)
+```
+
+
+# Set Cell-type markers 
+
+```{r fig.height=4, fig.width=6}
+P21_cellIdents  = as.character(PFC_P21_sobj@ident)
+
+
+P21_cellIdents[P21_cellIdents %in% c(19:22,24:33)] = "Excitatory"
+P21_cellIdents[P21_cellIdents %in% c(15:17)] = "Inhibitory"
+P21_cellIdents[P21_cellIdents %in% c(5)] = "Astro"
+P21_cellIdents[P21_cellIdents %in% c(7:14)] = "Endo"
+P21_cellIdents[P21_cellIdents %in% c(6)] = "Microglia"
+P21_cellIdents[P21_cellIdents %in% c(3:4)] = "Oligo"
+P21_cellIdents[P21_cellIdents %in% c(1:2)] = "NF Oligo"
+P21_cellIdents[P21_cellIdents %in% c(23)] = "OPC"
+P21_cellIdents[P21_cellIdents %in% c(18)] = "Cell-Cycle"
+
+PFC_P21_sobj@meta.data$CellType = P21_cellIdents
+
+TSNEPlot(PFC_P21_sobj,do.label = T, colors.use = pal_npg()(10),group.by="CellType",label.size = 5,pt.size = 0.2)
+```
+
+
+```{r fig.height=6, fig.width=8}
+save(PFC_P21_sobj, file="FinalObjects/PFC_P21_sobj.RData")
+
+FeaturePlot(PFC_P21_sobj,c("Pou3f1","Tshz2","Foxp2","Syt6","Penk"),cols.use = c("grey80","red"),pt.size = 0.2)
+```
+
+# Merge Adult and P21 mPFC data
+
+Compare to saline samples only
+
+```{r}
+#load("PFCmerged_saline_sobj.RData")
+load("FinalObjects/all_cell_inDD_saline_sobj.RData")
+
+all_cell_inDD_saline_sobj@meta.data$DevStage = "Adult"
+PFC_P21_sobj@meta.data$DevStage= "P21"
+```
+
+```{r fig.height=15, fig.width=8}
+hvg.adult <- rownames(x = head(x = all_cell_inDD_saline_sobj@hvg.info, n = 2000))
+hvg.p21 <- rownames(x = head(x = PFC_P21_sobj@hvg.info, n = 2000))
+hvg.union <- union(hvg.adult, hvg.p21)
+
+
+
+PFC_Adult_P21_cca_sobj <- RunCCA(all_cell_inDD_saline_sobj, PFC_P21_sobj,scale.data = TRUE,genes.use = hvg.union)
+DimHeatmap(PFC_Adult_P21_cca_sobj,dim.use = 1:20,reduction.type = "cca",do.balanced = T,cells.use = 500)
+```
+
+
+```{r}
+PFC_Adult_P21_cca_sobj = AlignSubspace(PFC_Adult_P21_cca_sobj,
+                                   reduction.type = "cca",
+                                   grouping.var = "DevStage",
+                                   dims.align = 1:20)
+```
+
+
+```{r fig}
+p_PFC = MetageneBicorPlot(PFC_Adult_P21_cca_sobj, grouping.var = "DevStage", 
+                          dims.eval = 1:20, display.progress = TRUE,return.mat = T)
+tmp =p_PFC %>% filter(bicor >= 0.15)
+toUse = as.numeric( names(table(tmp$cc))[table(tmp$cc)==2])
+toUse
+```
+
+
+
+```{r fig}
+touSE = which(PFC_Adult_P21_cca_sobj@meta.data$CellType != "Cell-Cycle")
+PFC_Adult_P21_cca_sobj = SubsetData(PFC_Adult_P21_cca_sobj, 
+                                    cells.use = PFC_Adult_P21_cca_sobj@cell.names[touSE],
+                                    subset.raw = T)
+
+
+PFC_Adult_P21_cca_sobj <- RunTSNE(object = PFC_Adult_P21_cca_sobj, reduction.use = "cca.aligned", dims.use = toUse,
+                                  do.fast = TRUE)
+
+PFC_Adult_P21_cca_sobj <- SetIdent(PFC_Adult_P21_cca_sobj, ident.use = PFC_Adult_P21_cca_sobj@meta.data$DevStage)
+
+pall = TSNEPlot(PFC_Adult_P21_cca_sobj,do.label = F, group.by="DevStage",pt.size = 0.2,do.return=T,colors.use = pal_npg()(2))
+```
+
+
+# label cells
+```{r fig.height=4, fig.width=10}
+
+PFC_Adult_P21_cca_sobj@meta.data$Orignal_Ident = ""
+
+PFC_Adult_P21_cca_sobj@meta.data[all_cell_inDD_saline_sobj@cell.names, ]$Orignal_Ident = all_cell_inDD_saline_sobj@meta.data$CellType
+PFC_Adult_P21_cca_sobj@meta.data[PFC_P21_sobj@cell.names, ]$Orignal_Ident = PFC_P21_sobj@meta.data$CellType
+
+
+PFC_Adult_P21_cca_sobj@meta.data$Orignal_Ident <- gsub('oligo',"Oligo",PFC_Adult_P21_cca_sobj@meta.data$Orignal_Ident)
+
+
+adult_sobj1 = SubsetData(PFC_Adult_P21_cca_sobj,subset.name = "DevStage",accept.value = "Adult",subset.raw = T)
+p21_sobj1 = SubsetData(PFC_Adult_P21_cca_sobj,subset.name = "DevStage",accept.value = "P21",subset.raw = T)
+
+
+toUse <- which(adult_sobj1@meta.data$Orignal_Ident != "")
+
+adult_sobj1 <- SubsetData(adult_sobj1,cells.use = adult_sobj1@cell.names[toUse],subset.raw = T)
+
+p1 = TSNEPlot(adult_sobj1,do.label = T,colors.use = pal_npg()(10),group.by="Orignal_Ident",pt.size = 0.2) + 
+  ggtitle("Adult") + theme(plot.title = element_text(hjust = 0.5))
+p2 = TSNEPlot(p21_sobj1,do.label = T,colors.use = pal_npg()(10),group.by="Orignal_Ident",pt.size = 0.2) + 
+  ggtitle("P21") + theme(plot.title = element_text(hjust = 0.5))
+
+
+gridExtra::grid.arrange(pall,p1,p2,ncol=1)
+```
+
+
+# Plot some markers
+
+
+```{r fig.height=6, fig.width=10}
+p1_adult = FeaturePlot(adult_sobj1,c("Tshz2","Foxp2","Pou3f1","Cck"),cols.use = c("grey80","red"),do.return = T,pt.size = 0.5)
+p1_p21 = FeaturePlot(p21_sobj1,c("Tshz2","Foxp2","Pou3f1","Cck"),cols.use = c("grey80","red"),do.return = T, pt.size = 0.5)
+
+
+gridExtra::grid.arrange(p1_adult$Tshz2, p1_adult$Foxp2, p1_adult$Pou3f1,
+                        p1_p21$Tshz2, p1_p21$Foxp2, p1_p21$Pou3f1
+                        ,ncol=3)
+
+```
+
+# Plot some layer markers
+
+```{r fig.height=6, fig.width=12}
+p2_adult = FeaturePlot(adult_sobj1,c("Cux2","Rorb","Syt6","Etv1"),cols.use = c("grey80","red"),do.return = T,pt.size = 0.5)
+p2_p21 = FeaturePlot(p21_sobj1,c("Cux2","Rorb","Syt6","Etv1"),cols.use = c("grey80","red"),do.return = T, pt.size = 0.5)
+
+
+gridExtra::grid.arrange(p2_adult$Cux2, p2_adult$Rorb, p2_adult$Syt6, p2_adult$Etv1,
+                        p2_p21$Cux2, p2_p21$Rorb, p2_p21$Syt6, p2_p21$Etv1,
+                        ncol=4)
+```
+
+
+
+# check the difference at the cell-type level 
+
+## Excitatory 
+
+
+
+```{r }
+load("Excitatory/PFC_excitatory_sobj.RData")
+
+PFC_excitatory_salie_sobj <- SubsetData(PFC_excitatory_sobj,subset.name = "treatment",accept.value = "Saline",subset.raw = T)
+
+
+
+PFC_Adult_P21_cca_Excitatory_sobj=SubsetData(PFC_Adult_P21_cca_sobj,subset.name = "Orignal_Ident",accept.value = "Excitatory",subset.raw = T)
+
+PFC_Adult_P21_cca_Excitatory_sobj <- removeMitoandRiboGenes_raw(PFC_Adult_P21_cca_Excitatory_sobj)
+PFC_Adult_P21_cca_Excitatory_sobj <- removeMitoandRiboGenes(PFC_Adult_P21_cca_Excitatory_sobj)
+```
+
+
+```{r}
+Adult_cca_excitatory_sobj <- SubsetData(PFC_Adult_P21_cca_Excitatory_sobj, subset.name = "DevStage", accept.value = "Adult",subset.raw = T)
+Adult_cca_excitatory_sobj <- SubsetData(Adult_cca_excitatory_sobj,cells.use = PFC_excitatory_salie_sobj@cell.names,subset.raw = T)
+
+Adult_cca_excitatory_sobj <- removeMitoandRiboGenes_raw(Adult_cca_excitatory_sobj)
+Adult_cca_excitatory_sobj <- removeMitoandRiboGenes(Adult_cca_excitatory_sobj)
+
+pos <- match(Adult_cca_excitatory_sobj@cell.names, PFC_excitatory_salie_sobj@cell.names)
+
+Adult_cca_excitatory_sobj@meta.data$Adult.cluster <- PFC_excitatory_salie_sobj@ident[pos]
+
+TSNEPlot(Adult_cca_excitatory_sobj, group.by="Adult.cluster",do.label = T, colors.use = generateColors(28))
+```
+
+```{r}
+P21_cca_excitatory_sobj <- SubsetData(PFC_Adult_P21_cca_Excitatory_sobj, subset.name = "DevStage", accept.value = "P21",subset.raw = T)
+TSNEPlot(PFC_Adult_P21_cca_Excitatory_sobj)
+```
+
+```{r fig.height=4, fig.width=6}
+FeaturePlot(PFC_Adult_P21_cca_Excitatory_sobj,c("Pou3f1","Syt6","Foxp2","Gad2"),cols.use = c("grey80","red"),pt.size = 0.2)
+```
+
+
+```{r fig.height=20, fig.width=12}
+
+Adult_selected_markers <- c("Calb1", #1,2,3,4
+                      "Ddit4l",#1,2,3,4
+                      "Adam33",#1,3
+                      "Myh7", #3,4
+                      "Penk","Lpl", #3
+                      "Nnat", #5,7,9
+                      "Osr1","Galnt14","Gstm1", #5
+                      "Expi", #6
+                      "Rspo2", #7,8
+                      "Nnmt", #7
+                      "Ccdc80", #8
+                      "Cbln2",#9,11
+                      "Pou3f1","Kcnn2","Oma1",#10
+                      "Thsd7a","Susd5","Rassf3",#11
+                      "Tshz2","Nxph1","Sla2","Olfm3","Slc17a6",#12
+                      "Foxp2","Syt6","Sla" #13
+                      )
+
+PlotMarketGenesHeatmap(P21_cca_excitatory_sobj,
+                       sobj_mrks = P21_excitatory_markers,
+                       pct.1.thr = 0.5,pct.2.thr = 0.1,
+                       cols = generateColors(13),is.pval = T,
+                       additional_markers = Adult_selected_markers
+                       )
+```
+
+
+
+# Try boostrapped correlation between samples
+
+```{r}
+require(scrattch.hicat)
+g1= FastWhichCells(PFC_Adult_P21_cca_Excitatory_sobj, group.by= "DevStage", subset.value = "P21", invert = FALSE)
+g2= FastWhichCells(PFC_Adult_P21_cca_Excitatory_sobj, group.by= "DevStage", subset.value = "P21", invert = TRUE)
+
+
+var_genes = DimTopGenes(PFC_Adult_P21_cca_Excitatory_sobj,reduction.type = "cca",dim.use = 1:20,num.genes = 100)
+
+P21.dat = PFC_Adult_P21_cca_Excitatory_sobj@data[,g1]
+
+P60.dat = PFC_Adult_P21_cca_Excitatory_sobj@data[,g2]
+P60.cl = PFC_Adult_P21_cca_Excitatory_sobj@meta.data[g2,]$L2_clusters
+names(P60.cl) = g2
+
+P21_map.result = map_sampling(P60.dat, P60.cl, P21.dat, markers = var_genes)
+
+rm(P21.dat,P60.dat,P60.cl)
+```
+
+# Map the L2 identities
+
+```{r}
+
+
+P21_map.df = P21_map.result$map.df
+
+
+P21_map.df$Final_Assignmet = as.character(P21_map.df$pred.cl)
+
+P21_map.df$Final_Assignmet[P21_map.df$prob < 0.5] = "Unassigned"
+
+
+PFC_Adult_P21_cca_Excitatory_sobj@meta.data[rownames(P21_map.df),]$L2_clusters = P21_map.df$Final_Assignmet
+
+PFC_Adult_P21_cca_Excitatory_sobj@meta.data$Predicted= "Adult"
+
+PFC_Adult_P21_cca_Excitatory_sobj@meta.data[rownames(P21_map.df),]$Predicted = gsub("Exc_","", as.character(P21_map.df$Final_Assignmet))
+
+PFC_Adult_P21_cca_Excitatory_sobj@meta.data$Predicted = factor(PFC_Adult_P21_cca_Excitatory_sobj@meta.data$Predicted,
+                                                                                      levels = c(as.character(1:26),"Unassigned", "Adult"))
+
+TSNEPlot(PFC_Adult_P21_cca_Excitatory_sobj,group.by="Predicted",colors.use = c(generateColors(26),"black", "grey80"),do.label = T,label.size = 5,
+         order = c(as.character(1:26),"Unassigned", "Adult"))
+```
+
+
+# Map the L1 identities
+
+```{r}
+
+PFC_Adult_P21_cca_Excitatory_sobj@meta.data$L1_clusters = "P21"
+
+PFC_Adult_P21_cca_Excitatory_sobj@meta.data[g2,]$L1_clusters = PFC_excitatory_sobj@meta.data[g2,]$L1_cluster
+
+P60.cl.l1 = PFC_Adult_P21_cca_Excitatory_sobj@meta.data[g2,]$L1_clusters
+names(P60.cl.l1) = g2
+
+P21_map.L1.result = map_sampling(P60.dat, P60.cl.l1, P21.dat, markers = var_genes)
+
+P21_map.L1.df = P21_map.L1.result$map.df
+
+P21_map.L1.df$Final_Assignmet = as.character(P21_map.L1.df$pred.cl)
+P21_map.L1.df$Final_Assignmet[P21_map.L1.df$prob < 0.5] = "Unassigned"
+
+
+PFC_Adult_P21_cca_Excitatory_sobj@meta.data[rownames(P21_map.L1.df),]$L1_clusters = P21_map.L1.df$Final_Assignmet
+
+PFC_Adult_P21_cca_Excitatory_sobj@meta.data$Predicted_L1= "Adult"
+
+PFC_Adult_P21_cca_Excitatory_sobj@meta.data[rownames(P21_map.L1.df),]$Predicted_L1 = gsub("Exc_","", as.character(P21_map.L1.df$Final_Assignmet))
+
+PFC_Adult_P21_cca_Excitatory_sobj@meta.data$Predicted_L1 = factor(PFC_Adult_P21_cca_Excitatory_sobj@meta.data$Predicted_L1,
+                                                                                      levels = c(as.character(1:26),"Unassigned", "Adult") )
+
+TSNEPlot(PFC_Adult_P21_cca_Excitatory_sobj,group.by="Predicted_L1",colors.use = c(generateColors(13),"black", "grey80"),do.label = T,label.size = 5,
+         order = c(as.character(1:26),"Unassigned", "Adult"))
+```
+
+# Do differential genes
+
+
+```{r}
+PFC_Adult_P21_cca_Excitatory_sobj = SetIdent(PFC_Adult_P21_cca_Excitatory_sobj, 
+                                             ident.use = PFC_Adult_P21_cca_Excitatory_sobj@meta.data$Predicted_L1 )
+
+PFC_Adult_P21_cca_Excitatory_sobj = SubsetData(PFC_Adult_P21_cca_Excitatory_sobj,ident.remove = "Unassigned",subset.raw = T)
+
+PFC_Adult_P21_cca_Excitatory_sobj@meta.data$Predicted_Ident = PFC_Adult_P21_cca_Excitatory_sobj@meta.data$Predicted_L1
+
+PFC_Adult_P21_cca_Excitatory_sobj@meta.data[g2,]$Predicted_Ident = gsub("Exc_","",as.character( PFC_Adult_P21_cca_Excitatory_sobj@meta.data[g2,]$L1_clusters))
+
+PFC_Adult_P21_cca_Excitatory_sobj@meta.data$Predicted_Ident = droplevels(PFC_Adult_P21_cca_Excitatory_sobj@meta.data$Predicted_Ident)
+
+
+
+```
+
+# Find Excitatory neurons DEG
+
+```{r}
+P21_Adult_DEG <- list()
+
+for(cls in levels(PFC_Adult_P21_cca_Excitatory_sobj@meta.data$Predicted_Ident)){
+    
+    print(paste0("****** ",cls," *****"))
+    clus_sobj = SubsetData(PFC_Adult_P21_cca_Excitatory_sobj,subset.name = "Predicted_Ident",accept.value = cls,subset.raw = T)
+    
+    p21_cells = FastWhichCells(clus_sobj, group.by= "DevStage", subset.value = "P21", invert = FALSE)
+    adult_cells = FastWhichCells(clus_sobj, group.by= "DevStage", subset.value = "P21", invert = TRUE)
+  
+    newIdents = as.character(clus_sobj@ident)
+    names(newIdents) = names(clus_sobj@ident)
+  
+    newIdents[p21_cells] = paste0("P21_",cls)
+    newIdents[adult_cells] = paste0("Adult_",cls)
+  
+    clus_sobj = SetIdent(clus_sobj, ident.use = newIdents)
+  
+    cat("DEG ...\n")
+    P21_Adult_DEG[[cls]] <- FindMarkers(clus_sobj,ident.1 = paste0("Adult_",cls), 
+                                        test.use = "negbinom",
+                                        latent.vars = c("nUMI"))
+}
+
+
+save(P21_Adult_DEG,file="FinalObjects/P21_Adult_DEG.RData")
+
+#save(P21_Adult_DEG,file="P21/P21_Adult_DEG.RData")
+
+```
+
+## Save results 
+
+```{r}
+require(xlsx)
+P21_Adult_DEG_filtered= list()
+
+dir.create("Compare_with_P21",showWarnings = F)
+dir.create("Compare_with_P21/Exc_DEG",showWarnings = F)
+
+epigenetic_regulators <- read.csv("Data/EpiGenes_main.csv")
+epigenetic_regulators_genes = as.character(epigenetic_regulators$MGI_symbol)
+epigenetic_regulators_genes = epigenetic_regulators_genes[epigenetic_regulators_genes != "#"]
+
+
+epigenetic_regulators_byClus = list()
+
+for(cls in names(P21_Adult_merged_DEG)){
+  
+  colnames(P21_Adult_merged_DEG[[cls]])[1] ="Gene"
+  rownames(P21_Adult_merged_DEG[[cls]]) = P21_Adult_merged_DEG[[cls]]$Gene
+  P21_Adult_merged_DEG[[cls]]$avg_log2FC = log2(exp(P21_Adult_merged_DEG[[cls]]$avg_logFC))  
+  # P21_Adult_DEG_filtered[[cls]] = subset(P21_Adult_DEG[[cls]], (abs(pct.1 - pct.2)/max(pct.1,pct.2)) >= 0.2 & p_val_adj < 0.05 & abs(avg_logFC) > log(1.5) & (pct.1 < 0.8 | pct.2 < 0.8))
+  
+  P21_Adult_DEG_filtered[[cls]] = subset(P21_Adult_merged_DEG[[cls]], p_val_adj < 0.05 & abs(avg_logFC) > log(1.5) & (pct.1 < 0.9 | pct.2 < 0.9))
+  
+  
+  P21_Adult_DEG_filtered[[cls]]$MGI_symbol = rownames(P21_Adult_DEG_filtered[[cls]])
+  
+  epigenetic_regulators_byClus[[cls]] = merge(P21_Adult_DEG_filtered[[cls]],epigenetic_regulators,by = "MGI_symbol",all.x = F,sort = F)
+  
+  
+  #fname = paste0("Compare_with_P21/Exc_DEG/Esc_",cls,".xlsx")  
+  #write.xlsx(P21_Adult_DEG_filtered[[cls]],file = fname)
+  
+  #fname = paste0("Compare_with_P21/Exc_DEG/Exc_",cls,"_DEG_TFs.xlsx")  
+  #write.xlsx(mrg,file = fname)
+}
+
+```
+
+
+# Count the number of DE epifactors per cluster
+
+```{r}
+nbDE_epi <- data.frame(cluster= names(epigenetic_regulators_byClus),
+                  nbFactors = as.numeric(sapply(epigenetic_regulators_byClus, nrow)),
+                  cellType = gsub("_\\d+","",names(epigenetic_regulators_byClus)))
+
+ggplot(nbDE_epi, aes(x= cluster, y=nbFactors)) + geom_bar(stat = "identity") + theme_bw() + facet_grid(.~cellType)
+
+```
+
+# Plot the complexes per-cluster
+
+```{r}
+DE_epi_complexes = data.frame()
+
+for(cls in names(epigenetic_regulators_byClus)){
+  print(cls)
+  
+  if(nrow(epigenetic_regulators_byClus[[cls]])>0){
+    df <- data.frame(cluster= cls, Complex_name = epigenetic_regulators_byClus[[cls]]$Complex_name)
+    DE_epi_complexes = rbind(DE_epi_complexes,df)
+  }
+}
+
+DE_epi_complexes_stats <- DE_epi_complexes %>% 
+                          count(cluster, Complex_name) %>% 
+                          group_by(cluster) %>%
+                          mutate(freq=n/sum(n))
+
+DE_epi_complexes_stats$cellType = gsub("_\\d+","",DE_epi_complexes_stats$cluster)
+
+DE_epi_complexes_stats = subset(DE_epi_complexes_stats, Complex_name != "#")
+
+ggplot(DE_epi_complexes_stats, aes(x=cluster, y=Complex_name,color=factor(n))) + 
+  geom_point(aes(size=n)) + theme_bw() + 
+  facet_grid(.~cellType,scales = "free_x",space = "free_x") + 
+  theme(axis.text.x = element_text(angle = 45,color = "black",hjust = 1),
+        text = element_text(color = "black")) + 
+  scale_color_brewer(palette = "Set1")
+
+```
+
+
+```{r}
+epigenetic_regulators_byClus_mrg <- data.frame()
+
+for(cls in names(epigenetic_regulators_byClus)){
+  
+  if(nrow(epigenetic_regulators_byClus[[cls]])>0){
+    df= epigenetic_regulators_byClus[[cls]]
+    df$gene =NULL
+    df$Cluster = cls
+    epigenetic_regulators_byClus_mrg = rbind(epigenetic_regulators_byClus_mrg, df) 
+  }
+}
+
+write.csv(epigenetic_regulators_byClus_mrg,file="FinalObjects/epigenetic_regulators_byClus_mrg.csv")
+
+```
+
+
+```{r}
+DE_epi_complexes = data.frame()
+
+for(cls in names(epigenetic_regulators_byClus)){
+  print(cls)
+  
+  if(nrow(epigenetic_regulators_byClus[[cls]])>0){
+    direction = ifelse(epigenetic_regulators_byClus[[cls]]$avg_logFC>0,"Up","Down")
+    df <- data.frame(cluster= cls, 
+                     Complex_name = epigenetic_regulators_byClus[[cls]]$Complex_name,
+                     direction = direction
+                     )
+    DE_epi_complexes = rbind(DE_epi_complexes,df)
+  }
+}
+
+DE_epi_complexes_stats <- DE_epi_complexes %>% 
+                          dplyr::count(cluster, Complex_name,direction) %>% 
+                          group_by(cluster) %>%
+                          mutate(freq=n/sum(n))
+
+DE_epi_complexes_stats$cellType = gsub("_\\d+","",DE_epi_complexes_stats$cluster)
+
+DE_epi_complexes_stats = subset(DE_epi_complexes_stats, Complex_name != "#")
+
+DE_epi_complexes_stats_up = subset(DE_epi_complexes_stats, direction == "Up")
+DE_epi_complexes_stats_down = subset(DE_epi_complexes_stats, direction == "Down")
+
+
+DE_epi_complexes_stats_mat_up = reshape2::dcast(data = DE_epi_complexes_stats_up,formula = Complex_name ~ cluster,fill = 0,
+                                                   value.var = "n" ,drop = F)
+rownames(DE_epi_complexes_stats_mat_up) <- DE_epi_complexes_stats_mat_up$Complex_name
+DE_epi_complexes_stats_mat_up$Complex_name = NULL
+
+
+DE_epi_complexes_stats_mat_down = reshape2::dcast(data = DE_epi_complexes_stats_down,formula = Complex_name ~ cluster,fill = 0,
+                                                     value.var = "n" ,drop = F)
+rownames(DE_epi_complexes_stats_mat_down) <- DE_epi_complexes_stats_mat_down$Complex_name
+DE_epi_complexes_stats_mat_down$Complex_name = NULL
+
+clus_ord= c("Astro","Endo","Microglia","NF Oligo","Oligo",
+            "Exc_1","Exc_2","Exc_3","Exc_4","Exc_5","Exc_6","Exc_7","Exc_8",
+            "Exc_9","Exc_10","Exc_11","Exc_12","Exc_13",
+            "Inhib_7","Inhib_9"
+            )
+
+DE_epi_complexes_stats_mat_down = DE_epi_complexes_stats_mat_down[,clus_ord]
+DE_epi_complexes_stats_mat_up = DE_epi_complexes_stats_mat_up[,clus_ord]
+
+mrg = cbind(DE_epi_complexes_stats_mat_up,DE_epi_complexes_stats_mat_down)
+
+rs = rowSums(mrg)
+
+mrg = mrg[rs>0,]
+
+ph = hclust(dist(mrg),method = "average")
+
+
+
+pheatmap(mrg[ph$order,],
+         color = colorRampPalette(rev(brewer.pal(n = 7, name ="Spectral")))(4),
+         border_color = "black",cluster_cols = F,cluster_rows = F,
+         gaps_col = 20)
+
+```
+
+
+# 
+
+```{r}
+
+```
+
+# Plot Modification per-cluster
+
+```{r}
+DE_epi_Modification = data.frame()
+
+for(cls in names(epigenetic_regulators_byClus)){
+  print(cls)
+  
+  if(nrow(epigenetic_regulators_byClus[[cls]])>0){
+    direction = ifelse(epigenetic_regulators_byClus[[cls]]$avg_logFC>0,"Up","Down")
+    df <- data.frame(cluster= cls, 
+                     gene = epigenetic_regulators_byClus[[cls]]$MGI_symbol,
+                     Modification = epigenetic_regulators_byClus[[cls]]$Modification,
+                     direction = direction
+                     )
+    DE_epi_Modification = rbind(DE_epi_Modification,df)
+  }
+}
+
+DE_epi_Modification_stats <- DE_epi_Modification %>% 
+                          dplyr::count(cluster, Modification,direction) %>% 
+                          group_by(cluster) %>%
+                          mutate(freq=n/sum(n))
+
+DE_epi_Modification_stats$cellType = gsub("_\\d+","",DE_epi_Modification_stats$cluster)
+
+DE_epi_Modification_stats = subset(DE_epi_Modification_stats, Modification != "#")
+
+DE_epi_Modification_stats_up = subset(DE_epi_Modification_stats, direction == "Up")
+DE_epi_Modification_stats_down = subset(DE_epi_Modification_stats, direction == "Down")
+
+
+DE_epi_Modification_stats_mat_up = reshape2::dcast(data = DE_epi_Modification_stats_up,formula = Modification ~ cluster,fill = 0,
+                                                   value.var = "n" ,drop = F)
+rownames(DE_epi_Modification_stats_mat_up) <- DE_epi_Modification_stats_mat_up$Modification
+DE_epi_Modification_stats_mat_up$Modification = NULL
+
+
+DE_epi_Modification_stats_mat_down = reshape2::dcast(data = DE_epi_Modification_stats_down,formula = Modification ~ cluster,fill = 0,
+                                                     value.var = "n" ,drop = F)
+rownames(DE_epi_Modification_stats_mat_down) <- DE_epi_Modification_stats_mat_down$Modification
+DE_epi_Modification_stats_mat_down$Modification = NULL
+
+clus_ord= c("Astro","Endo","Microglia","NF Oligo","Oligo",
+            "Exc_1","Exc_2","Exc_3","Exc_4","Exc_5","Exc_6","Exc_7","Exc_8",
+            "Exc_9","Exc_10","Exc_11","Exc_12","Exc_13",
+            "Inhib_7","Inhib_9"
+            )
+
+DE_epi_Modification_stats_mat_down = DE_epi_Modification_stats_mat_down[,clus_ord]
+DE_epi_Modification_stats_mat_up = DE_epi_Modification_stats_mat_up[,clus_ord]
+
+mrg = cbind(DE_epi_Modification_stats_mat_up,DE_epi_Modification_stats_mat_down)
+
+rs = rowSums(mrg)
+
+mrg = mrg[rs>0,]
+
+ph = hclust(dist(mrg),method = "average")
+
+
+
+pheatmap(mrg[ph$order,],
+         color = colorRampPalette(rev(brewer.pal(n = 7, name ="Spectral")))(100),
+         border_color = "black",cluster_cols = F,cluster_rows = F,
+         gaps_col = 20)
+```
+
+```{r}
+ggplot(DE_epi_Modification_stats, aes(x=cluster, y=Modification,color=n)) + 
+  geom_point(aes(size=n)) + theme_bw() + 
+  facet_grid(.~cellType,scales = "free_x",space = "free_x") + 
+  theme(axis.text.x = element_text(angle = 45,color = "black",hjust = 1),
+        text = element_text(color = "black")) + 
+  ggsci::scale_color_gsea()
+
+```
+
+
+
+```{r}
+DE_epi_Function = data.frame()
+
+for(cls in names(epigenetic_regulators_byClus)){
+  print(cls)
+  
+  if(nrow(epigenetic_regulators_byClus[[cls]])>0){
+    direction = ifelse(epigenetic_regulators_byClus[[cls]]$avg_logFC>0,"Up","Down")
+    df <- data.frame(cluster= cls, 
+                     Function = epigenetic_regulators_byClus[[cls]]$Function,
+                     direction = direction
+                     )
+    DE_epi_Function = rbind(DE_epi_Function,df)
+  }
+}
+
+
+DE_epi_Function$Function = gsub("Histone modification write cofactor, Histone modification write cofactor",
+                                "Histone modification write cofactor", DE_epi_Function$Function)
+
+DE_epi_Function$Function = gsub(".*Polycomb group",
+                                "Polycomb group", DE_epi_Function$Function)
+
+DE_epi_Function_stats <- DE_epi_Function %>% 
+                          count(cluster, Function,direction) %>% 
+                          group_by(cluster) %>%
+                          mutate(freq=n/sum(n))
+
+DE_epi_Function_stats$Function = factor(DE_epi_Function_stats$Function)
+
+DE_epi_Function_stats$cellType = gsub("_\\d+","",DE_epi_Function_stats$cluster)
+
+DE_epi_Function_stats = subset(DE_epi_Function_stats, Function != "#")
+
+DE_epi_Function_stats_up = subset(DE_epi_Function_stats, direction == "Up")
+DE_epi_Function_stats_down = subset(DE_epi_Function_stats, direction == "Down")
+
+
+DE_epi_Function_stats_mat_up = reshape2::dcast(data = DE_epi_Function_stats_up,formula = Function ~ cluster,fill = 0,
+                                                   value.var = "n" ,drop = F)
+rownames(DE_epi_Function_stats_mat_up) <- DE_epi_Function_stats_mat_up$Function
+DE_epi_Function_stats_mat_up$Function = NULL
+
+
+DE_epi_Function_stats_mat_down = reshape2::dcast(data = DE_epi_Function_stats_down,formula = Function ~ cluster,fill = 0,
+                                                     value.var = "n" ,drop = F)
+rownames(DE_epi_Function_stats_mat_down) <- DE_epi_Function_stats_mat_down$Function
+DE_epi_Function_stats_mat_down$Function = NULL
+
+clus_ord= c("Astro","Endo","Microglia","NF Oligo","Oligo",
+            "Exc_1","Exc_2","Exc_3","Exc_4","Exc_5","Exc_6","Exc_7","Exc_8",
+            "Exc_9","Exc_10","Exc_11","Exc_12","Exc_13",
+            "Inhib_7","Inhib_9"
+            )
+
+DE_epi_Function_stats_mat_down = DE_epi_Function_stats_mat_down[,clus_ord]
+DE_epi_Function_stats_mat_up = DE_epi_Function_stats_mat_up[,clus_ord]
+
+mrg = cbind(DE_epi_Function_stats_mat_up,DE_epi_Function_stats_mat_down)
+
+rs = rowSums(mrg)
+
+mrg = mrg[rs>0,]
+
+ph = hclust(dist(mrg),method = "average")
+
+
+
+pheatmap(mrg[ph$order,],
+         color = colorRampPalette(rev(brewer.pal(n = 7, name ="Spectral")))(100),
+         border_color = "black",cluster_cols = F,cluster_rows = F,
+         gaps_col = 20)
+```
+
+```{r}
+
+ggplot(DE_epi_Function_stats, aes(x=cluster, y=Function,color=n)) + 
+  geom_point(aes(size=n)) + theme_bw() + 
+  facet_grid(.~cellType,scales = "free_x",space = "free_x") + 
+  theme(axis.text.x = element_text(angle = 45,color = "black",hjust = 1),
+        text = element_text(color = "black")) + 
+  ggsci::scale_color_gsea()
+```
+
+
+```{r fig.height=6, fig.width=8}
+pos <- match(PFC_excitatory_salie_sobj@cell.names, PFC_Adult_P21_cca_Excitatory_sobj@cell.names)
+
+PFC_Adult_P21_cca_Excitatory_sobj@meta.data$Adult.cluster="P21"
+PFC_Adult_P21_cca_Excitatory_sobj@meta.data$Adult.cluster[pos] = as.character(PFC_excitatory_salie_sobj@ident)
+
+
+ADULT_cc_cols <- c("grey80",pal_d3("category20c")(13))
+
+TSNEPlot(PFC_Adult_P21_cca_Excitatory_sobj,do.label = T,colors.use = ADULT_cc_cols,group.by="Adult.cluster",
+         plot.order=c(names(table(PFC_Adult_P21_cca_Excitatory_sobj@meta.data$Adult.cluster)))
+         ) + 
+  ggtitle("Adut clusters") + theme(plot.title = element_text(hjust = 0.5))
+```
+
+
+## Predict the identity of all the cells 
+
+```{r}
+require(scrattch.hicat)
+g1= FastWhichCells(PFC_Adult_P21_cca_sobj, group.by= "DevStage", subset.value = "P21", invert = FALSE)
+g2= FastWhichCells(PFC_Adult_P21_cca_sobj, group.by= "DevStage", subset.value = "P21", invert = TRUE)
+
+
+g1 = PFC_Adult_P21_cca_sobj@cell.names[PFC_Adult_P21_cca_sobj@meta.data$DevStage=="P21"]
+g2 = PFC_Adult_P21_cca_sobj@cell.names[PFC_Adult_P21_cca_sobj@meta.data$DevStage!="P21"]
+
+g1=unique(g1)
+g2=unique(g2)
+
+var_genes = DimTopGenes(PFC_Adult_P21_cca_sobj,reduction.type = "cca",dim.use = 1:20,num.genes = 100)
+
+P21.dat = PFC_Adult_P21_cca_sobj@data[,g1]
+
+P60.dat = PFC_Adult_P21_cca_sobj@data[,g2]
+P60.cl = PFC_Adult_P21_cca_sobj@meta.data[g2,]$L2_clusters
+names(P60.cl) = g2
+
+P21_map.result = map_sampling(P60.dat, P60.cl, P21.dat, markers = var_genes)
+
+P21_map.df = P21_map.result$map.df
+
+
+P21_map.df$Final_Assignmet = as.character(P21_map.df$pred.cl)
+
+P21_map.df$Final_Assignmet[P21_map.df$prob < 0.5] = "Unassigned"
+
+
+PFC_Adult_P21_cca_sobj@meta.data[rownames(P21_map.df),]$L2_clusters = P21_map.df$Final_Assignmet
+
+PFC_Adult_P21_cca_sobj@meta.data$Predicted= "Adult"
+
+PFC_Adult_P21_cca_sobj@meta.data[rownames(P21_map.df),]$Predicted = gsub("Exc_","", as.character(P21_map.df$Final_Assignmet))
+
+PFC_Adult_P21_cca_sobj@meta.data$Predicted = factor(PFC_Adult_P21_cca_sobj@meta.data$Predicted,
+                                                                                      levels = c(as.character(1:26),"Unassigned", "Adult") )
+
+TSNEPlot(PFC_Adult_P21_cca_sobj,group.by="Predicted",colors.use = c(generateColors(26),"black", "grey80"),do.label = T,label.size = 5,
+         order = c(as.character(1:26),"Unassigned", "Adult"))
+```
+
+
+# Do differential expression analysis 
+
+## merge non-neuronal cells
+```{r}
+load("Compare_with_P21/P21_map.result_all.RData")
+
+P21_map.df = P21_map.result_all$map.df
+
+PFC_Adult_P21_cca_sobj@meta.data$Predicted_ident = "Unassigned"
+
+pos <- which(!is.na(PFC_Adult_P21_cca_sobj@meta.data$L2_clusters))
+PFC_Adult_P21_cca_sobj@meta.data$Predicted_ident[pos] = as.character(PFC_Adult_P21_cca_sobj@meta.data$L2_clusters[pos])
+
+PFC_Adult_P21_cca_sobj@meta.data[rownames(P21_map.df),]$Predicted_ident = as.character(P21_map.df$pred.cl)
+
+pos <- which(PFC_Adult_P21_cca_sobj@meta.data$Predicted_ident != "Unassigned")
+pos = PFC_Adult_P21_cca_sobj@cell.names[pos]
+
+PFC_Adult_P21_cca_sobj = SubsetData(PFC_Adult_P21_cca_sobj,cells.use = pos,subset.raw = T)
+
+# Merge non-neuronal
+PFC_Adult_P21_cca_sobj@meta.data$Predicted_ident_merged = PFC_Adult_P21_cca_sobj@meta.data$Predicted_ident
+PFC_Adult_P21_cca_sobj@meta.data$Predicted_ident_merged[grep("Astro_",PFC_Adult_P21_cca_sobj@meta.data$Predicted_ident_merged)] = "Astro"
+PFC_Adult_P21_cca_sobj@meta.data$Predicted_ident_merged[grep("Endo_",PFC_Adult_P21_cca_sobj@meta.data$Predicted_ident_merged)] = "Endo"
+PFC_Adult_P21_cca_sobj@meta.data$Predicted_ident_merged[grep("Microglia_",PFC_Adult_P21_cca_sobj@meta.data$Predicted_ident_merged)] = "Microglia"
+PFC_Adult_P21_cca_sobj@meta.data$Predicted_ident_merged[grep("NF Oligo_",PFC_Adult_P21_cca_sobj@meta.data$Predicted_ident_merged)] = "NF Oligo"
+PFC_Adult_P21_cca_sobj@meta.data$Predicted_ident_merged[grep("Oligo_",PFC_Adult_P21_cca_sobj@meta.data$Predicted_ident_merged)] = "Oligo"
+PFC_Adult_P21_cca_sobj@meta.data$Predicted_ident_merged[grep("OPC_",PFC_Adult_P21_cca_sobj@meta.data$Predicted_ident_merged)] = "OPC"
+
+```
+
+
+# Do differential gene expression
+
+```{r}
+cls_toUse <- grep("Exc_",sort(unique(PFC_Adult_P21_cca_sobj@meta.data$Predicted_ident_merged)), invert=T, value=T)
+
+require(doParallel)
+require(foreach)
+
+registerDoParallel(4)
+
+P21_Adult_All_DEG= foreach(cls = cls_toUse,.packages="Seurat") %dopar% {
+    
+    print(paste0("****** ",cls," *****"))
+    clus_sobj = SubsetData(PFC_Adult_P21_cca_sobj,subset.name = "Predicted_ident_merged",accept.value = cls,subset.raw = T)
+    
+    p21_cells = FastWhichCells(clus_sobj, group.by= "DevStage", subset.value = "P21", invert = FALSE)
+    adult_cells = FastWhichCells(clus_sobj, group.by= "DevStage", subset.value = "P21", invert = TRUE)
+  
+    newIdents = as.character(clus_sobj@ident)
+    names(newIdents) = names(clus_sobj@ident)
+  
+    newIdents[p21_cells] = paste0("P21_",cls)
+    newIdents[adult_cells] = paste0("Adult_",cls)
+  
+    clus_sobj = SetIdent(clus_sobj, ident.use = newIdents)
+  
+    cat("DEG ...\n")
+    FindMarkers(clus_sobj,ident.1 = paste0("Adult_",cls), 
+                                        test.use = "negbinom",
+                                        latent.vars = c("nUMI"))
+}
+
+names(P21_Adult_All_DEG) = cls_toUse
+
+
+names(P21_Adult_DEG)= paste0("Exc_",names(P21_Adult_DEG))
+
+
+
+P21_Adult_merged_DEG = c(P21_Adult_All_DEG, P21_Adult_DEG)
+
+
+
+
+load("Compare_with_P21/P21_Adult_All_DEG.RData")
+
+```
+
+
+
+# Get the differential TFs in each cluster
+
+# Overlap with ATAC-Seq peaks
+
+```{r}
+mPFC_ATAC_peaks = fread("../../Data/GSE111586_RAW/GSM3034633_PreFrontalCortex_62216.peakmatrix.txt.gz")
+
+rs = rowSums(mPFC_ATAC_peaks[,5:ncol(mPFC_ATAC_peaks)])
+
+mPFC_ATAC_peaks= mPFC_ATAC_peaks[which(rs>=1),]
+
+setnames(mPFC_ATAC_peaks,1,"seqnames")
+
+mPFC_ATAC_peaks = GRanges(mPFC_ATAC_peaks[,1:3])
+
+
+#cluster_sigpeaks = lapply(sigpeaks, function(x) subsetByOverlaps(mPFC_ATAC_peaks,x))
+
+#save(cluster_sigpeaks,file="FinalObjects/cluster_sigpeaks.RData")
+
+```
+
+
+# For each region Find the TFs that bind there
+
+
+
+# HOT regions for the Down-regulated genes
+
+```{r}
+require(ks)
+require(depmixS4)
+TF_files_pos <- read.table("../../../Public/Japer_motifs/tf_file_list.txt",header = F)
+colnames(TF_files_pos) <- c("file_name","TF_symbol")
+
+TFBS_dir = "D:/Projects/Saline_Cocaine_Morphine_scRNASeq/Public/Japer_motifs/TFBS/"
+dir.create("Compare_with_P21/DEG/TFS_bigwig",showWarnings = F)
+
+
+for(cls in names(P21_Adult_merged_DEG)[-c(1:23)]){
+  message(paste0("**** ",cls," ****"))
+  
+  up_reg = subset(P21_Adult_merged_DEG_sig[[cls]], avg_logFC >0)
+  
+  cls_TFs <- subset(TF_files_pos,toupper(TF_symbol) %in% toupper(rownames(up_reg)))
+  
+  
+  if(nrow(cls_TFs)>1){
+    tfbs_files = sapply(1:nrow(cls_TFs),function(i)  paste0(TFBS_dir,cls_TFs$file_name[i],"_TFBS.bed"))
+    message(paste0(length(tfbs_files)," identified"))
+    
+    
+    tfbs_GT <- pblapply(tfbs_files,function(x) {
+      tmp = fread(x)
+      if(nrow(tmp)>0){
+        TFid= as.character(tmp$motif_alt_id[1])
+      set(tmp,,1:2,NULL)
+      setnames(tmp,1,"seqnames")
+      tmp$strand = NULL
+      gr = GRanges(tmp)
+      gr = reduce(gr)
+      gr$TF = TFid
+      gr  
+      }else{
+        GRanges()
+      }
+    })
+    
+    names(tfbs_GT) = cls_TFs$TF_symbol
+    
+    tfbs_GT = unlist(GRangesList(tfbs_GT))
+    tfbs_GT = GenomicRanges::sort(tfbs_GT)
+    
+    message("Calculating coverage")
+    cov = coverage(tfbs_GT)
+    #ans = GRanges(cov)
+    
+    
+    # Get the centers of TFBS per-chromosome
+    TFBS_centers = split(tfbs_GT,seqnames(tfbs_GT))
+    TFBS_centers = pblapply(TFBS_centers,function(x){
+        ctr = ceiling((start(x)+end(x))/2)
+    })
+    
+    TFBS_centers = TFBS_centers[1:21]
+    
+    # Do kernel smoothing per-chrmosome
+    message("Gaussian Kernel smoothing")
+    TFBS_ks = pblapply(names(TFBS_centers),function(chrom){
+      y = as.data.frame(cov[[chrom]])
+      ks = ksmooth(x = 1:nrow(y),
+                   y= as.numeric(y$value),
+                   kernel = "normal",
+                   bandwidth = 300,
+                   x.points = TFBS_centers[[chrom]])
+      ks
+    })
+    
+    names(TFBS_ks) = names(TFBS_centers)
+    
+   # maxVlas = which.max(sapply(TFBS_ks, function(d) max(d$y)))
+   #  # Train an HMM to find peaks
+   #   message("Train HMM")
+   #  df = data.frame(position =TFBS_ks[[maxVlas]]$x, value =TFBS_ks[[maxVlas]]$y) 
+   #  mod <- depmix(value ~ position, family = gaussian("identity"), nstates = 2, 
+   #          data = df
+   #          #instart = c(0.4,0.6) 
+   #          #trstart = c(1,0.1,0.1,0.9),
+   #          #respstart = c(0.9,0.1,0.1,0.1)
+   #          )
+   #          
+   #  set.seed(1)
+   #  fm2 <- fit(mod, verbose = TRUE,em=em.control(maxit=500))
+   #  
+    # probs <- posterior(fm2)
+    #
+    # df$S1<- probs$S1
+    # df$S2 <- probs$S2
+    # df$state <- probs$state
+    #
+    # par(mfrow=c(2,1))
+    # plot(df$position[1:200],df$value[1:200],type='l',lty=2)
+    # plot(df$position[1:200],df$state[1:200],type='l',lty=2)
+
+    # Predict the peaks
+     message("Predict HOT regions and calculate their complexity")
+    peaks_pred  =pblapply(names(TFBS_centers), function(chrom){
+      print(chrom)
+      df=  data.frame(position =TFBS_ks[[chrom]]$x, value =TFBS_ks[[chrom]]$y) 
+      mod <- depmix(value ~ position, family = gaussian("identity"), nstates = 2, trstart = c(0.2,0.8,0.8,0.2),
+                    data = df)
+      
+      fm = tryCatch({
+        set.seed(1245)
+        f = fit(mod,verbose = TRUE,emcontrol=em.control(maxit=500))
+        f
+      }, error= function(cond){
+        mod <- setpars(mod,getpars(fm2))
+        #p2 = viterbi(mod2)
+        set.seed(12)
+        f = fit(mod,verbose = TRUE,emcontrol=em.control(maxit=500,random.start=FALSE))
+        return(f)
+      })
+      
+      p2 = posterior(fm)
+      x = rle(p2$state)
+      y = cumsum(x$lengths)
+      
+      # toUse <- y[which(x$lengths > 1)]
+      # tmp <- bins100bpCov[toUse]
+      # 
+      #p2 = p2[toUse,]
+      m1 = mean(df$value[which(p2$state==1)])
+      m2 = mean(df$value[which(p2$state==2)])
+      
+      toUse = ifelse(m2>m1,2,1)
+      
+      pos <- which(x$values == toUse)
+      
+      chrom_tfbs = subset(tfbs_GT,seqnames == chrom)
+      
+      ends = end(chrom_tfbs[y[pos]])
+      starts = start(chrom_tfbs[y[pos]-x$lengths[pos]  + 1])
+    
+      res <- GRanges(chrom, IRanges(starts,ends))
+      
+      # Count the complexity of th different regions
+      df3 =  pblapply(1:length(res), function(i){
+        tmp = subsetByOverlaps(chrom_tfbs, res[i])
+        dt = data.frame(complexity=length(unique(tmp$TF)), TFs = paste(unique(tmp$TF),collapse = ",") )
+        dt
+      })
+      
+      df3 = do.call("rbind",df3)
+      res$complexity = df3$complexity
+      res$TFs = df3$TFs
+      # res$complexity = pbsapply(1:length(res), function(i){
+      #   tmp = subsetByOverlaps(chrom_tfbs, res[i])
+      #   length(unique(tmp$TF))
+      # })
+      res
+    })
+    
+    
+    
+    rm(cov,tfbs_GT)
+    message("Saving bigwig file")
+    peaks_pred = unlist(GRangesList(peaks_pred))
+    fout = paste0("Compare_with_P21/DEG/TFS_bigwig/",cls,"_UP_DE_TF_profile.bed")
+    #fout = paste0("Compare_with_P21/DEG/TFS_bigwig/",cls,"_DE_TF_profile.wig")
+    #export.wig(object =  head(ans,5000), con = fout,dataFormat="variableStep") 
+    #export.bw(object = peaks_pred, con = fout)
+    write.table(as.data.frame(peaks_pred),file = fout)
+  }
+}
+
+```
+
+# HOT regions for the Down-regulated genes
+
+
+```{r}
+require(ks)
+require(depmixS4)
+TF_files_pos <- read.table("../../../Public/Japer_motifs/tf_file_list.txt",header = F)
+colnames(TF_files_pos) <- c("file_name","TF_symbol")
+
+TFBS_dir = "D:/Projects/Saline_Cocaine_Morphine_scRNASeq/Public/Japer_motifs/TFBS/"
+dir.create("Compare_with_P21/DEG/TFS_bigwig",showWarnings = F)
+
+
+for(cls in names(P21_Adult_merged_DEG)[-c(1:18)]){
+  message(paste0("**** ",cls," ****"))
+  
+  down_reg = subset(P21_Adult_merged_DEG_sig[[cls]], avg_logFC <0)
+  
+  cls_TFs <- subset(TF_files_pos,toupper(TF_symbol) %in% toupper(rownames(down_reg)))
+  
+  
+  if(nrow(cls_TFs)>1){
+    tfbs_files = sapply(1:nrow(cls_TFs),function(i)  paste0(TFBS_dir,cls_TFs$file_name[i],"_TFBS.bed"))
+    message(paste0(length(tfbs_files)," identified"))
+    
+    message("Reads TFBS")
+    tfbs_GT <- pblapply(tfbs_files,function(x) {
+      tmp = fread(x)
+      if(nrow(tmp)>0){
+        TFid= as.character(tmp$motif_alt_id[1])
+      set(tmp,,1:2,NULL)
+      setnames(tmp,1,"seqnames")
+      tmp$strand = NULL
+      gr = GRanges(tmp)
+      gr = reduce(gr)
+      gr$TF = TFid
+      gr  
+      }else{
+        GRanges()
+      }
+    })
+    
+    names(tfbs_GT) = cls_TFs$TF_symbol
+    
+    tfbs_GT = unlist(GRangesList(tfbs_GT))
+    tfbs_GT = GenomicRanges::sort(tfbs_GT)
+    
+    message("Calculating coverage")
+    cov = coverage(tfbs_GT)
+    #ans = GRanges(cov)
+    
+    
+    # Get the centers of TFBS per-chromosome
+    TFBS_centers = split(tfbs_GT,seqnames(tfbs_GT))
+    TFBS_centers = pblapply(TFBS_centers,function(x){
+        ctr = ceiling((start(x)+end(x))/2)
+    })
+    
+    TFBS_centers = TFBS_centers[1:21]
+    
+    # Do kernel smoothing per-chrmosome
+    message("Gaussian Kernel smoothing")
+    TFBS_ks = pblapply(names(TFBS_centers),function(chrom){
+      y = as.data.frame(cov[[chrom]])
+      ks = ksmooth(x = 1:nrow(y),
+                   y= as.numeric(y$value),
+                   kernel = "normal",
+                   bandwidth = 300,
+                   x.points = TFBS_centers[[chrom]])
+      ks
+    })
+    
+    names(TFBS_ks) = names(TFBS_centers)
+    
+   # maxVlas = which.max(sapply(TFBS_ks, function(d) max(d$y)))
+   #  # Train an HMM to find peaks
+   #   message("Train HMM")
+   #  df = data.frame(position =TFBS_ks[[maxVlas]]$x, value =TFBS_ks[[maxVlas]]$y) 
+   #  mod <- depmix(value ~ position, family = gaussian("identity"), nstates = 2, 
+   #          data = df
+   #          #instart = c(0.4,0.6) 
+   #          #trstart = c(1,0.1,0.1,0.9),
+   #          #respstart = c(0.9,0.1,0.1,0.1)
+   #          )
+   #          
+   #  set.seed(1)
+   #  fm2 <- fit(mod, verbose = TRUE,em=em.control(maxit=500))
+   #  
+    # probs <- posterior(fm2)
+    #
+    # df$S1<- probs$S1
+    # df$S2 <- probs$S2
+    # df$state <- probs$state
+    #
+    # par(mfrow=c(2,1))
+    # plot(df$position[1:200],df$value[1:200],type='l',lty=2)
+    # plot(df$position[1:200],df$state[1:200],type='l',lty=2)
+
+    # Predict the peaks
+     message("Predict HOT regions and calculate their complexity")
+    peaks_pred  =pblapply(names(TFBS_centers), function(chrom){
+      print(chrom)
+      df=  data.frame(position =TFBS_ks[[chrom]]$x, value =TFBS_ks[[chrom]]$y) 
+      mod <- depmix(value ~ position, family = gaussian("identity"), nstates = 2, trstart = c(0.2,0.8,0.8,0.2),
+                    data = df)
+      
+      fm = tryCatch({
+        set.seed(1245)
+        f = fit(mod,verbose = TRUE,emcontrol=em.control(maxit=500))
+        f
+      }, error= function(cond){
+        mod <- setpars(mod,getpars(fm2))
+        #p2 = viterbi(mod2)
+        set.seed(12)
+        f = fit(mod,verbose = TRUE,emcontrol=em.control(maxit=500,random.start=FALSE))
+        return(f)
+      })
+      
+      p2 = posterior(fm)
+      x = rle(p2$state)
+      y = cumsum(x$lengths)
+      
+      # toUse <- y[which(x$lengths > 1)]
+      # tmp <- bins100bpCov[toUse]
+      # 
+      #p2 = p2[toUse,]
+      m1 = mean(df$value[which(p2$state==1)])
+      m2 = mean(df$value[which(p2$state==2)])
+      
+      toUse = ifelse(m2>m1,2,1)
+      
+      pos <- which(x$values == toUse)
+      
+      chrom_tfbs = subset(tfbs_GT,seqnames == chrom)
+      
+      ends = end(chrom_tfbs[y[pos]])
+      starts = start(chrom_tfbs[y[pos]-x$lengths[pos]  + 1])
+    
+      res <- GRanges(chrom, IRanges(starts,ends))
+      
+      # Count the complexity of th different regions
+      df3 =  pblapply(1:length(res), function(i){
+        tmp = subsetByOverlaps(chrom_tfbs, res[i])
+        dt = data.frame(complexity=length(unique(tmp$TF)), TFs = paste(unique(tmp$TF),collapse = ",") )
+        dt
+      })
+      
+      df3 = do.call("rbind",df3)
+      res$complexity = df3$complexity
+      res$TFs = df3$TFs
+      # res$complexity = pbsapply(1:length(res), function(i){
+      #   tmp = subsetByOverlaps(chrom_tfbs, res[i])
+      #   length(unique(tmp$TF))
+      # })
+      res
+    })
+    
+    
+    
+    rm(cov,tfbs_GT)
+    message("Saving bigwig file")
+    peaks_pred = unlist(GRangesList(peaks_pred))
+    fout = paste0("Compare_with_P21/DEG/TFS_bigwig/",cls,"_Down_DE_TF_profile.bed")
+    #fout = paste0("Compare_with_P21/DEG/TFS_bigwig/",cls,"_DE_TF_profile.wig")
+    #export.wig(object =  head(ans,5000), con = fout,dataFormat="variableStep") 
+    #export.bw(object = peaks_pred, con = fout)
+    write.table(as.data.frame(peaks_pred),file = fout)
+  }
+}
+```
+
+### Counr the number of DEG TFs with PWM
+
+```{r}
+
+TF_files_pos <- read.table("../../../Public/Japer_motifs/tf_file_list.txt",header = F)
+colnames(TF_files_pos) <- c("file_name","TF_symbol")
+
+TFBS_dir = "D:/Projects/Saline_Cocaine_Morphine_scRNASeq/Public/Japer_motifs/TFBS/"
+dir.create("Compare_with_P21/DEG/TFS_bigwig",showWarnings = F)
+
+
+nbDEGPWMTFs <- data.frame()
+
+for(cls in names(P21_Adult_merged_DEG)[-c(1:18)]){
+  message(paste0("**** ",cls," ****"))
+  
+  down_reg = subset(P21_Adult_merged_DEG_sig[[cls]], avg_logFC <0)
+  up_reg = subset(P21_Adult_merged_DEG_sig[[cls]], avg_logFC >0)
+  
+  cls_down_TFs <- subset(TF_files_pos,toupper(TF_symbol) %in% toupper(rownames(down_reg)))
+  cls_up_TFs <- subset(TF_files_pos,toupper(TF_symbol) %in% toupper(rownames(up_reg)))
+  
+  df <- data.frame(cluster = cls, npUp = nrow(cls_up_TFs), nbDown= nrow(cls_down_TFs))
+  
+  nbDEGPWMTFs = rbind(nbDEGPWMTFs, df)
+}
+
+
+nbDEGPWMTFs_mlt <- melt(nbDEGPWMTFs, id.vars = "cluster")
+colnames(nbDEGPWMTFs_mlt)= c("cluster","Direction","number")
+ggplot(nbDEGPWMTFs_mlt, aes(x=cluster, y=number, fill=Direction)) + geom_bar(stat = "identity",position = position_dodge()) + theme_bw()
+```
+
+
+## Select reliable HOT regions
+
+### Up-regulated
+
+```{r}
+
+dir.create("Compare_with_P21/DEG/TFS_bigwig/Filtered_HOT/",showWarnings = F)
+dir.create("Compare_with_P21/DEG/TFS_bigwig/Filtered_HOT/Up",showWarnings = F)
+dir.create("Compare_with_P21/DEG/TFS_bigwig/Filtered_HOT/Down",showWarnings = F)
+
+for(cls in names(P21_Adult_merged_DEG)[-c(1:18)]){
+  message(paste0("**** ",cls," ****"))
+  
+  # Upregulated 
+  fin = paste0("Compare_with_P21/DEG/TFS_bigwig/",cls,"_UP_DE_TF_profile.bed")
+  
+  if(file.exists(fin)){
+    tmp = read.table(fin)
+    maxComplexity = max(tmp$complexity)
+    thr = floor(maxComplexity/2)
+    
+    filtered_hot = subset(tmp, complexity>thr)
+    filtered_hot = GRanges(filtered_hot)
+    filtered_hot = subsetByOverlaps(filtered_hot, mPFC_ATAC_peaks)
+    
+    fout = paste0("Compare_with_P21/DEG/TFS_bigwig/Filtered_HOT/Up/",cls,"_UP_DE_TF_profile_HOT.bed")
+    write.table(filtered_hot,file = fout,row.names = FALSE,quote = FALSE)
+  }
+  
+  
+  # Downregulated 
+  
+  fin = paste0("Compare_with_P21/DEG/TFS_bigwig/",cls,"_Down_DE_TF_profile.bed")
+  
+  if(file.exists(fin)){
+    tmp = read.table(fin)
+    maxComplexity = max(tmp$complexity)
+    thr = floor(maxComplexity/2)
+    
+    filtered_hot = subset(tmp, complexity>thr)
+    
+    filtered_hot = GRanges(filtered_hot)
+    filtered_hot = subsetByOverlaps(filtered_hot, mPFC_ATAC_peaks)
+    
+    fout = paste0("Compare_with_P21/DEG/TFS_bigwig/Filtered_HOT/Down/",cls,"_Down_DE_TF_filtered_HOT.bed")
+    write.table(filtered_hot,file = fout,row.names = FALSE,quote = FALSE)  
+  }
+}
+```
+
+
+
+# Convert to GREAT format
+
+```{r}
+
+dir.create("Compare_with_P21/DEG/TFS_bigwig/Filtered_HOT/Up/GREAT_GO",showWarnings = F)
+dir.create("Compare_with_P21/DEG/TFS_bigwig/Filtered_HOT/Down/GREAT_GO",showWarnings = F)
+
+for(cls in names(P21_Adult_merged_DEG)[-c(1:18)]){
+  
+  # Up regulated
+  fout = paste0("Compare_with_P21/DEG/TFS_bigwig/Filtered_HOT/Up/",cls,"_UP_DE_TF_profile_HOT.bed")
+  
+  if(file.exists(fout)){
+    tmp <-  read.table(fout)
+    tmp <- tmp[,1:3]
+    tmp$name = paste0("peak_",1:nrow(tmp))
+    
+    fname = paste0("Compare_with_P21/DEG/TFS_bigwig/Filtered_HOT/Up/GREAT_GO/",cls,"_UP_DE_TF_profile_HOT.bed")
+    write.table(tmp, fname, sep="\t",col.names = F, row.names = F, quote = F)
+  }
+  
+  
+  # Download regulated
+  fout = paste0("Compare_with_P21/DEG/TFS_bigwig/Filtered_HOT/Down/",cls,"_Down_DE_TF_filtered_HOT.bed")
+  if(file.exists(fout)){
+    tmp <-  read.table(fout)
+    tmp <- tmp[,1:3]
+    tmp$name = paste0("peak_",1:nrow(tmp))
+    
+    fname = paste0("Compare_with_P21/DEG/TFS_bigwig/Filtered_HOT/Down/GREAT_GO/",cls,"_Down_DE_TF_filtered_HOT.bed")
+    write.table(tmp, fname, sep="\t",col.names = F, row.names = F, quote = F)
+  }
+}
+```
+
+
+# Find excitatory specific peaks
+
+```{r}
+
+cluster_sigpeaks_up <- GRangesList()
+
+for(cls in names(P21_Adult_merged_DEG)[-c(1:18)]){
+  fin = paste0("Compare_with_P21/DEG/TFS_bigwig/Filtered_HOT/Up/",cls,"_UP_DE_TF_profile_HOT.bed")
+  if(file.exists(fin)){
+    tmp = read.table(fin,header = T)  
+    cluster_sigpeaks_up[[cls]] = GRanges(tmp)  
+  }
+}
+
+
+
+cluster_sigpeaks_down <- GRangesList()
+for(cls in names(P21_Adult_merged_DEG)[-c(1:18)]){
+  fin = paste0("Compare_with_P21/DEG/TFS_bigwig/Filtered_HOT/Down/",cls,"_Down_DE_TF_filtered_HOT.bed")
+  
+  if(file.exists(fin)){
+    tmp = read.table(fin,header = T)  
+    cluster_sigpeaks_down[[cls]] = GRanges(tmp)
+  }
+}
+
+```
+
+
+```{r}
+
+exc_clus_specific_up_peaks = list()
+
+for(cls in grep("Exc_",names(cluster_sigpeaks_up),value = T)){
+  
+  message(paste0("***** ",cls," *****"))
+  others <- grep(cls,names(cluster_sigpeaks_up),invert = T,value = T)
+  others <- grep("Exc_",others,value = T)
+  mrg_others <- unlist(GRangesList(cluster_sigpeaks_up[others]))
+  exc_clus_specific_up_peaks[[cls]] = subsetByOverlaps(cluster_sigpeaks_up[[cls]],mrg_others,invert = T)
+}
+
+```
+
+```{r}
+
+exc_clus_specific_down_peaks = list()
+
+for(cls in grep("Exc_",names(cluster_sigpeaks_down),value = T)){
+  
+  message(paste0("***** ",cls," *****"))
+  others <- grep(cls,names(cluster_sigpeaks_down),invert = T,value = T)
+  others <- grep("Exc_",others,value = T)
+  mrg_others <- unlist(GRangesList(cluster_sigpeaks_down[others]))
+  exc_clus_specific_down_peaks[[cls]] = subsetByOverlaps(cluster_sigpeaks_down[[cls]],mrg_others,invert = T)
+}
+
+```
+
+
+# Get the genomic distribution of the cluster specific HOT regions
+
+```{r}
+require(GenomicFeatures)
+require(ChIPseeker)
+
+
+txdb <- makeTxDbFromGFF("D:/genomes/mm9/Mus_musculus.NCBIM37.67_fixed.gtf")
+txdb <- keepStandardChromosomes(txdb)
+
+genes_unique = rtracklayer::import.gff("D:/genomes/mm9/Mus_musculus.NCBIM37.67_fixed.gtf")
+genes_unique = unique(mcols(genes_unique))[,c("gene_id","gene_name")]
+
+#tmp =unlist(GRangesList(exc_clus_specific_up_peaks))
+#genome(tmp) = "mm10"
+  
+exc_clus_specific_up_peaks[["random"]] = annotatr::randomize_regions(
+    regions = exc_clus_specific_up_peaks$Exc_13,
+    allow.overlaps = TRUE,
+    per.chromosome = TRUE)
+
+
+names(exc_clus_specific_up_peaks[["random"]]) = 1:length(exc_clus_specific_up_peaks[["random"]])
+
+exc_clus_specific_up_peaks.anno <- lapply(exc_clus_specific_up_peaks,
+                                              annotatePeak,
+                                              level = "gene",
+                                              tssRegion = c(-1500,500),
+                                              TxDb = txdb)
+
+
+exc_clus_specific_up_peaks.anno.df <- lapply(exc_clus_specific_up_peaks.anno, function(x){
+                                                                                tmp = as.data.frame(x)
+                                                                                pos <- match(tmp$geneId, genes_unique$gene_id)
+                                                                                tmp$geneName = genes_unique$gene_name[pos]
+                                                                                tmp
+                                                                              })
+
+
+
+
+plotAnnoStats2(peaks_anno = exc_clus_specific_up_peaks.anno,
+              ttl = "Genomic distribution cluster specific Up-regulated HOT regions",
+              category_order= c(paste0("Exc_",1:13),"random"),
+              simplify = T) + xlab("")
+
+```
+
+
+
+```{r}
+exc_clus_specific_down_peaks.anno <- lapply(exc_clus_specific_down_peaks,
+                                              annotatePeak,
+                                              level = "gene",
+                                              tssRegion = c(-1500,500),
+                                              TxDb = txdb)
+
+
+exc_clus_specific_down_peaks.anno.df <- lapply(exc_clus_specific_down_peaks.anno, function(x){
+                                                                                tmp = as.data.frame(x)
+                                                                                pos <- match(tmp$geneId, genes_unique$gene_id)
+                                                                                tmp$geneName = genes_unique$gene_name[pos]
+                                                                                tmp
+                                                                              })
+
+
+plotAnnoStats(peaks_anno = exc_clus_specific_down_peaks.anno,
+              ttl = "Genomic distribution cluster specific Down-regulated HOT regions",
+              category_order= paste0("Exc_",1:13),
+              simplify = T) + xlab("")
+```
+
+
+
+# Convert to GREAT format
+
+```{r}
+dir.create("Compare_with_P21/DEG/TFS_bigwig/Filtered_HOT/Down/GREAT/",showWarnings = F)
+dir.create("Compare_with_P21/DEG/TFS_bigwig/Filtered_HOT/Up/GREAT/",showWarnings = F)
+
+for(cls in names(exc_clus_specific_up_peaks)){
+  tmp <- as.data.frame(exc_clus_specific_up_peaks[[cls]])[,1:3]
+  tmp$name = paste0("peak_",1:nrow(tmp))
+  fname = paste0("Compare_with_P21/DEG/TFS_bigwig/Filtered_HOT/Up/GREAT/",cls,"_Up_DE_TF_filtered_HOT.bed")
+  write.table(tmp, fname, sep="\t",col.names = F, row.names = F, quote = F)
+}
+
+
+for(cls in names(exc_clus_specific_down_peaks)){
+  tmp <- as.data.frame(exc_clus_specific_down_peaks[[cls]])[,1:3]
+  tmp$name = paste0("peak_",1:nrow(tmp))
+  fname = paste0("Compare_with_P21/DEG/TFS_bigwig/Filtered_HOT/Down/GREAT/",cls,"_Down_DE_TF_filtered_HOT.bed")
+  write.table(tmp, fname, sep="\t",col.names = F, row.names = F, quote = F)
+}
+```
+
+
+
+# Read data
+
+```{r}
+nb_Up <- data.frame()
+for(cls in names(exc_clus_specific_up_peaks)){
+  df = data.frame(cluster=cls, nbHOT=length(exc_clus_specific_up_peaks[[cls]]))
+  nb_Up = rbind(nb_Up,df)
+}
+
+nb_Up$cluster = factor(nb_Up$cluster,levels = paste0("Exc_",1:13))
+nb_Up$type="Up"
+
+
+nb_down <- data.frame()
+for(cls in names(exc_clus_specific_down_peaks)){
+  df = data.frame(cluster=cls, nbHOT=length(exc_clus_specific_down_peaks[[cls]]))
+  nb_down = rbind(nb_down,df)
+}
+
+nb_down$cluster = factor(nb_down$cluster,levels = paste0("Exc_",1:13))
+nb_down$type="Down"
+
+
+
+nb_hot <- data.frame()
+for(cls in names(exc_clus_specific_down_peaks)){
+  df = data.frame(cluster=cls, 
+                  nbHOT=length(exc_clus_specific_down_peaks[[cls]]) + length(exc_clus_specific_up_peaks[[cls]]))
+  nb_hot = rbind(nb_hot,df)
+}
+
+nb_hot$cluster = factor(nb_hot$cluster,levels = paste0("Exc_",1:13))
+
+
+nb_hot = rbind(nb_Up, nb_down)
+
+ggplot(nb_hot, aes(x=cluster,y=nbHOT)) + geom_bar(stat = "identity")+ theme_bw()
+
+```
+
+# Get GREAT results
+
+## HOT regions associated with up-regulated TFs
+
+```{r}
+exc_clus_specific_up_associated_genes <- list()
+
+load("FinalObjects/PFC_Adult_P21_cca_Excitatory_sobj.RData")
+
+newIdent = paste0(PFC_Adult_P21_cca_Excitatory_sobj@meta.data$DevStage,"_Exc_",PFC_Adult_P21_cca_Excitatory_sobj@meta.data$Predicted_Ident)
+
+PFC_Adult_P21_cca_Excitatory_sobj = SetIdent(PFC_Adult_P21_cca_Excitatory_sobj,ident.use = newIdent)
+
+ae = AverageExpression(PFC_Adult_P21_cca_Excitatory_sobj)
+ae = log2(ae+1)
+base_file = "Compare_with_P21/DEG/TFS_bigwig/Filtered_HOT/Up/GREAT/GREAT_results/"
+
+UPReg_HOT_target_genes <- list()
+UPReg_HOT_target_DEG_regions <- list()
+
+for(cls in names(exc_clus_specific_up_peaks)){
+  
+  clus = gsub("_","",cls)
+  
+  f = list.files(base_file,pattern = paste0(clus,"_"),full.names = T)
+  
+  clus_pos = grep(paste0(cls,"$"), colnames(ae))
+  
+  if(length(f)>0){
+    tmp = fread(f,skip = 1,header = F)
+    tmp = subset(tmp, V1 %in% rownames(ae))
+    pos = which( rowSums(ae[tmp$V1,clus_pos]) >0)
+    UPReg_HOT_target_genes[[cls]] = tmp$V1[pos]  
+    
+    ovp = intersect(rownames(P21_Adult_merged_DEG_sig[[cls]]), UPReg_HOT_target_genes[[cls]])
+    tmp2 = subset(tmp, V1 %in% ovp)
+    peaks = gsub("\\s+\\(\\+*-*\\d+\\)","",tmp2$V2)
+    peaks = unlist(strsplit(peaks,split = ","))
+    peaks = gsub("\\s+","",peaks)
+    peaks = gsub("peak_","",peaks)
+    
+    UPReg_HOT_target_DEG_regions[[cls]] = exc_clus_specific_up_peaks[[cls]][as.numeric(peaks)]
+  }
+}
+```
+
+
+## HOT regions associated with down-regulated TFs
+
+
+# Calculate overlap with the differential genes
+
+```{r}
+
+
+base_down_file = "Compare_with_P21/DEG/TFS_bigwig/Filtered_HOT/Down/GREAT/GREAT_results/"
+DownReg_HOT_target_genes <- list()
+DownReg_HOT_target_DEG_regions <- list()
+
+for(cls in names(exc_clus_specific_down_peaks)){
+  
+  clus = gsub("_","",cls)
+  
+  f = list.files(base_down_file,pattern = paste0(clus,"_"),full.names = T)
+  
+  clus_pos = grep(paste0(cls,"$"), colnames(ae))
+  
+  if(length(f)>0){
+    tmp = fread(f,skip = 1,header = F)
+    tmp = subset(tmp, V1 %in% rownames(ae))
+    pos = which( rowSums(ae[tmp$V1,clus_pos]) >0)
+    DownReg_HOT_target_genes[[cls]] = tmp$V1[pos] 
+    
+    
+    
+    ovp = intersect(rownames(P21_Adult_merged_DEG_sig[[cls]]), DownReg_HOT_target_genes[[cls]])
+    tmp2 = subset(tmp, V1 %in% ovp)
+    peaks = gsub("\\s+\\(\\+*-*\\d+\\)","",tmp2$V2)
+    peaks = unlist(strsplit(peaks,split = ","))
+    peaks = gsub("\\s+","",peaks)
+    peaks = gsub("peak_","",peaks)
+    
+    DownReg_HOT_target_DEG_regions[[cls]] = exc_clus_specific_down_peaks[[cls]][as.numeric(peaks)]
+  }
+}
+```
+
+
+
+
+
+# Get Overlap with differential genes
+
+```{r fig.width=10}
+
+ovp_reg_with_DEG <- data.frame()
+
+for(cls  in names(exc_clus_specific_down_peaks)){
+  
+  reg =  c(DownReg_HOT_target_genes[[cls]], UPReg_HOT_target_genes[[cls]])
+  reg = unique(reg)
+  ovp = length(intersect(rownames(P21_Adult_merged_DEG_sig[[cls]]),reg))
+  jd = ovp/nrow(P21_Adult_merged_DEG_sig[[cls]])
+  
+  df = data.frame(cluster=cls, ovp_rate=jd)
+  
+  ovp_reg_with_DEG = rbind(ovp_reg_with_DEG, df)
+}
+
+ggplot(ovp_reg_with_DEG, aes(x=cluster, y=ovp_rate)) + geom_bar(stat = "identity",position = position_dodge(),width = 0.8) +theme_bw()
+```
+
+# Get HOT regions nearby DEG
+
+```{r}
+
+
+```
+
+
+
+# Generate HOT regions bigwig files
+
+
+## Up regulated regions
+
+```{r}
+
+for(cls in names(P21_Adult_merged_DEG)[-c(1:18)]){
+  message(paste0("**** ",cls," ****"))
+  
+  up_reg = subset(P21_Adult_merged_DEG_sig[[cls]], avg_logFC >0)
+  
+  cls_TFs <- subset(TF_files_pos,toupper(TF_symbol) %in% toupper(rownames(up_reg)))
+  
+   if(nrow(cls_TFs)>1){
+    tfbs_files = sapply(1:nrow(cls_TFs),function(i)  paste0(TFBS_dir,cls_TFs$file_name[i],"_TFBS.bed"))
+    message(paste0(length(tfbs_files)," identified"))
+    
+    
+    tfbs_GT <- pblapply(tfbs_files,function(x) {
+      tmp = fread(x)
+      if(nrow(tmp)>0){
+        TFid= as.character(tmp$motif_alt_id[1])
+      set(tmp,,1:2,NULL)
+      setnames(tmp,1,"seqnames")
+      tmp$strand = NULL
+      gr = GRanges(tmp)
+      gr = reduce(gr)
+      gr$TF = TFid
+      gr  
+      }else{
+        GRanges()
+      }
+    })
+    
+    names(tfbs_GT) = cls_TFs$TF_symbol
+    
+    tfbs_GT = unlist(GRangesList(tfbs_GT))
+    tfbs_GT = GenomicRanges::sort(tfbs_GT)
+    
+    
+    # Select only the HOT regions
+    fhot_up = paste0("Compare_with_P21/DEG/TFS_bigwig/Filtered_HOT/Up/",cls,"_UP_DE_TF_profile_HOT.bed")
+    
+  
+    HOT_up = fread(fhot_up)
+    HOT_up = GRanges(HOT_up)
+    
+    tfbs_GT = subsetByOverlaps(tfbs_GT,HOT_up)
+    
+    message("Calculating coverage")
+    cov = coverage(tfbs_GT)
+    
+    
+    cls_RleList <- RleList()
+  
+    
+    pb <- txtProgressBar(min = 0, 
+                         max = length(seqlevels(exc_clus_specific_up_peaks[[cls]])),
+                         style = 3)
+    
+    i=1
+    for(chrom in seqlevels(exc_clus_specific_up_peaks[[cls]])){
+      tmp = subset(exc_clus_specific_up_peaks[[cls]], seqnames == chrom)
+
+      if(length(tmp)==0){
+        next
+      }
+      
+      start(tmp) = start(tmp) - 2000
+      end(tmp) = end(tmp) + 2000
+      
+      tmp_cov = as.data.frame(cov[[chrom]])
+      
+      xpoints =  lapply(1:length(tmp), function(i) start(tmp)[i]:end(tmp)[i] )
+      xpoints = unlist(xpoints)
+      
+      xpoints = xpoints[xpoints <=nrow(tmp_cov)]
+      
+      ks = ksmooth(x=1:nrow(tmp_cov),
+             y =as.numeric(tmp_cov$value),
+             kernel="normal",
+             bandwidth = 300,
+             x.points =  xpoints
+                 )
+      
+      tmp_cov$value[ks$x] = 100 * ks$y
+      
+      cov[[chrom]] = Rle(tmp_cov$value)
+      setTxtProgressBar(pb, i)
+      i = i+1
+    }
+    
+    
+    ans = GRanges(cov)
+    
+    message("Saving bigwig files")
+    fhot_up_bw = paste0("Compare_with_P21/DEG/TFS_bigwig/Filtered_HOT/Up/",cls,"_UP_DE_TF_profile_HOT.bw")
+    rtracklayer::export.bw(ans,con = fhot_up_bw)
+    
+    
+    # # Do kernel smoothing per-chrmosome
+    # message("Gaussian Kernel smoothing")
+    # TFBS_ks = pblapply(names(TFBS_centers),function(chrom){
+    #   y = as.data.frame(cov[[chrom]])
+    #   ks = ksmooth(x = 1:nrow(y),
+    #                y= as.numeric(y$value),
+    #                kernel = "normal",
+    #                bandwidth = 300,
+    #                x.points = TFBS_centers[[chrom]])
+    #   ks
+    # })
+    # 
+    # names(TFBS_ks) = names(TFBS_centers)
+   }
+}
+
+
+```
+
+## remove non-smoothed regions
+
+```{r}
+dir.create("Compare_with_P21/DEG/TFS_bigwig/Filtered_HOT/Up/smoothed",showWarnings = F)
+for(cls in names(P21_Adult_merged_DEG)[-c(1:18)]){
+  fhot_up_bw = paste0("Compare_with_P21/DEG/TFS_bigwig/Filtered_HOT/Up/",cls,"_UP_DE_TF_profile_HOT.bw")
+  
+  if(file.exists(fhot_up_bw)){
+    bw = rtracklayer::import.bw(fhot_up_bw)
+    bw = subsetByOverlaps(bw,exc_clus_specific_up_peaks[[cls]])
+    fhot_up_bw2 = paste0("Compare_with_P21/DEG/TFS_bigwig/Filtered_HOT/Up/smoothed/",cls,"_UP_DE_TF_profile_HOT.bw")
+    rtracklayer::export.bw(bw,con = fhot_up_bw2)  
+  }
+}
+```
+
+## Down regulated regions
+
+```{r}
+
+for(cls in names(P21_Adult_merged_DEG)[-c(1:18)]){
+  message(paste0("**** ",cls," ****"))
+  
+  down_reg = subset(P21_Adult_merged_DEG_sig[[cls]], avg_logFC <0)
+  
+  cls_TFs <- subset(TF_files_pos,toupper(TF_symbol) %in% toupper(rownames(down_reg)))
+  
+   if(nrow(cls_TFs)>1){
+    tfbs_files = sapply(1:nrow(cls_TFs),function(i)  paste0(TFBS_dir,cls_TFs$file_name[i],"_TFBS.bed"))
+    message(paste0(length(tfbs_files)," identified"))
+    
+    
+    tfbs_GT <- pblapply(tfbs_files,function(x) {
+      tmp = fread(x)
+      if(nrow(tmp)>0){
+        TFid= as.character(tmp$motif_alt_id[1])
+      set(tmp,,1:2,NULL)
+      setnames(tmp,1,"seqnames")
+      tmp$strand = NULL
+      gr = GRanges(tmp)
+      gr = reduce(gr)
+      gr$TF = TFid
+      gr  
+      }else{
+        GRanges()
+      }
+    })
+    
+    names(tfbs_GT) = cls_TFs$TF_symbol
+    
+    tfbs_GT = unlist(GRangesList(tfbs_GT))
+    tfbs_GT = GenomicRanges::sort(tfbs_GT)
+    
+    
+    # Select only the HOT regions
+    fHOT_down = paste0("Compare_with_P21/DEG/TFS_bigwig/Filtered_HOT/Down/",cls,"_Down_DE_TF_filtered_HOT.bed")
+    
+  
+    HOT_down = fread(fHOT_down)
+    HOT_down = GRanges(HOT_down)
+    
+    tfbs_GT = subsetByOverlaps(tfbs_GT,HOT_down)
+    
+    message("Calculating coverage")
+    cov = coverage(tfbs_GT)
+    
+    
+    cls_RleList <- RleList()
+  
+    
+    pb <- txtProgressBar(min = 0, 
+                         max = length(seqlevels(exc_clus_specific_down_peaks[[cls]])),
+                         style = 3)
+    
+    i=1
+    for(chrom in seqlevels(exc_clus_specific_down_peaks[[cls]])){
+      tmp = subset(exc_clus_specific_down_peaks[[cls]], seqnames == chrom)
+
+      if(length(tmp)==0){
+        next
+      }
+      
+      start(tmp) = start(tmp) - 2000
+      end(tmp) = end(tmp) + 2000
+      
+      tmp_cov = as.data.frame(cov[[chrom]])
+      
+      xpoints =  lapply(1:length(tmp), function(i) start(tmp)[i]:end(tmp)[i] )
+      xpoints = unlist(xpoints)
+      
+      xpoints = xpoints[xpoints <=nrow(tmp_cov)]
+      
+      ks = ksmooth(x=1:nrow(tmp_cov),
+             y =as.numeric(tmp_cov$value),
+             kernel="normal",
+             bandwidth = 300,
+             x.points =  xpoints
+                 )
+      
+      tmp_cov$value[ks$x] = 100 * ks$y
+      
+      cov[[chrom]] = Rle(tmp_cov$value)
+      setTxtProgressBar(pb, i)
+      i = i+1
+    }
+    
+    
+    ans = GRanges(cov)
+    
+    message("Saving bigwig files")
+    fhot_down_bw = paste0("Compare_with_P21/DEG/TFS_bigwig/Filtered_HOT/Down/",cls,"_Down_DE_TF_filtered_HOT.bw")
+    rtracklayer::export.bw(ans,con = fhot_down_bw)
+    
+  
+   }
+}
+
+
+```
+
+
+
+
+# Get which clusters have a differential GWAS marker
+
+```{r}
+
+P21_Adult_DEG_sig <- list()
+
+
+clus_GWAS_assoss <- matrix(0,nrow = length(unique(all_cell_inDD_sobj@meta.data$L2_clusters)), ncol=length(PFC_AE_expression_GWAS_ord))
+
+rownames(clus_GWAS_assoss) <- sort(unique(all_cell_inDD_sobj@meta.data$L2_clusters))
+colnames(clus_GWAS_assoss) <- names(PFC_AE_expression_GWAS_ord)
+
+
+for(clus in names(P21_Adult_DEG)){
+  print(clus)
+  
+  P21_Adult_DEG_sig[[clus]] <- subset(P21_Adult_DEG[[clus]], abs(avg_logFC) > log(1.5) & p_val_adj < 1e-2)
+  
+  if(nrow(P21_Adult_DEG_sig[[clus]])){
+    df <- matrix(0, nrow=nrow(P21_Adult_DEG_sig[[clus]]), ncol=length(PFC_AE_expression_GWAS_ord))
+    colnames(df) <- paste0("Rank_in_",names(PFC_AE_expression_GWAS_ord))
+    rownames(df) <- rownames(P21_Adult_DEG_sig[[clus]])
+    
+    for(disease in names(PFC_AE_expression_GWAS_ord)){
+      pos <- match(P21_Adult_DEG_sig[[clus]]$gene, rownames(PFC_AE_expression_GWAS_ord[[disease]]))
+      
+      #pos[is.na(pos)]=0
+      if(sum(pos<30,na.rm = T)>0){
+        print(paste0(clus,":",disease))
+        clus_GWAS_assoss[clus,disease] = sum(pos<30,na.rm = T)
+      }
+      
+      df[,paste0("Rank_in_",disease)] <- pos
+    }
+    
+    P21_Adult_DEG_sig[[clus]] <- cbind(P21_Adult_DEG_sig[[clus]],df)  
+    }
+}
+
+
+```
+
+
+
+# Show the clusters that associated with a GWAS SNP
+
+```{r}
+pheatmap(clus_GWAS_assoss,display_numbers = T,cluster_rows = F,border_color = "black",cluster_cols = F, number_format = "%d",number_color = "black")
+```
+
+
+# Merge clusters 
+
+```{r}
+# all_cell_inDD_sobj@meta.data$L1_clusters <- gsub("Astro_.*","Astro",all_cell_inDD_sobj@meta.data$L2_clusters)
+# all_cell_inDD_sobj@meta.data$L1_clusters <- gsub("Endo_.*","Endo",all_cell_inDD_sobj@meta.data$L1_clusters)
+# all_cell_inDD_sobj@meta.data$L1_clusters <- gsub("NF Oligo_.*","NF Oligo",all_cell_inDD_sobj@meta.data$L1_clusters)
+# all_cell_inDD_sobj@meta.data$L1_clusters <- gsub("Oligo.*","Oligo",all_cell_inDD_sobj@meta.data$L1_clusters)
+# all_cell_inDD_sobj@meta.data$L1_clusters <- gsub("OPC_.*","Astro",all_cell_inDD_sobj@meta.data$L1_clusters)
+# 
+# all_cell_inDD_sobj@meta.data$L1_clusters <- gsub("Inhib_[12]$","Sst",all_cell_inDD_sobj@meta.data$L1_clusters)
+# all_cell_inDD_sobj@meta.data$L1_clusters <- gsub("Inhib_6|Inhib_12","Pvalb",all_cell_inDD_sobj@meta.data$L1_clusters)
+# all_cell_inDD_sobj@meta.data$L1_clusters <- gsub("Inhib_[459]$|Inhib_10|Inhib_11","Htr3a",all_cell_inDD_sobj@meta.data$L1_clusters)
+# all_cell_inDD_sobj@meta.data$L1_clusters <- gsub("Inhib_[78]$","Reln",all_cell_inDD_sobj@meta.data$L1_clusters)
+# 
+# table(all_cell_inDD_sobj@meta.data$L1_clusters)
+```
+
+#
+
+```{r}
+# PFC_P21_sobj@meta.data$L1_clusters <- gsub("Astro_.*","Astro",PFC_P21_sobj@meta.data$Predicted_Ident)
+# PFC_P21_sobj@meta.data$L1_clusters <- gsub("Endo_.*","Endo",PFC_P21_sobj@meta.data$L1_clusters)
+# PFC_P21_sobj@meta.data$L1_clusters <- gsub("NF Oligo_.*","NF Oligo",PFC_P21_sobj@meta.data$L1_clusters)
+# PFC_P21_sobj@meta.data$L1_clusters <- gsub("Oligo.*","Oligo",PFC_P21_sobj@meta.data$L1_clusters)
+# PFC_P21_sobj@meta.data$L1_clusters <- gsub("OPC_.*","Astro",PFC_P21_sobj@meta.data$L1_clusters)
+# 
+# PFC_P21_sobj@meta.data$L1_clusters <- gsub("Inhib_[12]$","Sst",PFC_P21_sobj@meta.data$L1_clusters)
+# PFC_P21_sobj@meta.data$L1_clusters <- gsub("Inhib_6|Inhib_12","Pvalb",PFC_P21_sobj@meta.data$L1_clusters)
+# PFC_P21_sobj@meta.data$L1_clusters <- gsub("Inhib_[459]$|Inhib_10|Inhib_11","Htr3a",PFC_P21_sobj@meta.data$L1_clusters)
+# PFC_P21_sobj@meta.data$L1_clusters <- gsub("Inhib_[78]$","Reln",PFC_P21_sobj@meta.data$L1_clusters)
+# 
+# table(PFC_P21_sobj@meta.data$L1_clusters)
+```
+
+## Do differential analysys
+
+```{r}
+
+# P21_Adult_merged_DEG <- list()
+# 
+# for(cls in unique(PFC_P21_sobj@meta.data$L1_clusters)){
+# 
+#   print(paste0("****** ",cls," *****"))
+#   if(length(grep("Exc_",cls))==1){
+#     P21_Adult_merged_DEG[[cls]] = P21_Adult_DEG[[cls]]
+#     next
+#   }
+#   
+#   cat("Getting P21 cluster ...\n")
+#   
+#   if(sum(PFC_P21_sobj@meta.data$L1_clusters == cls)>3 && sum(all_cell_inDD_sobj@meta.data$L1_clusters == cls)>=3){
+#    P21_sobj <- SubsetData(PFC_P21_sobj,subset.name = "L1_clusters",accept.value = cls,subset.raw = T)
+#   cat("Adult P21 cluster ...\n")
+#   Adult_sobj <- SubsetData(all_cell_inDD_sobj,subset.name = "L1_clusters",accept.value = cls, subset.raw = T)
+#   
+#   P21_sobj <- SetIdent(P21_sobj,ident.use = paste0("P21_", P21_sobj@meta.data$L1_clusters))
+#   Adult_sobj <- SetIdent(Adult_sobj,ident.use = paste0("Adult_", Adult_sobj@meta.data$L1_clusters))
+#   
+#   cat("Merging ...\n")
+#   mrg_sobj <- MergeSeurat(P21_sobj,Adult_sobj,min.genes = 3,min.cells = 0,do.normalize = T,do.scale = T,scale.factor = 1e6)
+#   
+#   p21_pos <- match(P21_sobj@cell.names, mrg_sobj@cell.names)
+#   Adult_pos <- match(Adult_sobj@cell.names, mrg_sobj@cell.names)
+#   
+#   newIdents = as.character(mrg_sobj@ident)
+#   newIdents[p21_pos] = as.character(P21_sobj@ident)
+#   newIdents[Adult_pos] = as.character(Adult_sobj@ident)
+#   
+#   mrg_sobj = SetIdent(mrg_sobj, ident.use = newIdents)
+#   
+#   cat("DEG ...\n")
+#   P21_Adult_merged_DEG[[cls]] <- FindAllMarkers(mrg_sobj, only.pos = T,test.use = "negbinom",latent.vars = c("nUMI"))
+#    
+#   }
+# }
+# 
+#save(P21_Adult_merged_DEG,file="P21/P21_Adult_merged_DEG.RData")
+```
+
+
+
+```{r}
+
+dir.create("P21/DEG_Vs_adult",showWarnings = F)
+
+for(clus in names(P21_Adult_merged_DEG)){
+  fname = paste0("P21/DEG_Vs_adult/",clus,"_P21_Vs_Adult_DEG.csv")  
+  
+  write.csv(P21_Adult_merged_DEG[[clus]], file = fname,row.names = F)
+}
+
+```
+
+
+# Plot the number of differential genes (Fig 4C)
+
+```{r}
+require(ComplexHeatmap)
+require(circlize)
+
+all_DEG = read.csv("Compare_with_P21/All_DEG.csv")
+
+P21_Adult_merged_DEG = list()
+
+for(clus in unique(all_DEG$cluster)){
+  tmp = subset(all_DEG, cluster == clus)
+  P21_Adult_merged_DEG[[clus]] = tmp
+}
+
+nbDEG <- matrix(0,nrow = length(P21_Adult_merged_DEG),ncol = 2)
+rownames(nbDEG) <- names(P21_Adult_merged_DEG)
+colnames(nbDEG) <- c("Up","Down")
+
+
+
+P21_Adult_merged_sig_DEG <- list()
+
+for(cls in names(P21_Adult_merged_DEG)){
+  
+     tmp = P21_Adult_merged_DEG[[cls]]
+     tmp = subset(tmp, p_val_adj < 0.05 & abs(avg_logFC) > log(2) & (pct.1 < 0.9 | pct.2 < 0.9))
+    # 
+     P21_Adult_merged_sig_DEG[[cls]] = tmp
+    # 
+    tmp = P21_Adult_merged_sig_DEG[[cls]]
+    nbUp = sum(tmp$avg_logFC >0)
+    nbDown = sum(tmp$avg_logFC <0)
+    
+    nbDEG[cls,] <- c(nbUp,-nbDown)
+}
+
+
+
+```
+
+
+```{r}
+
+paletteLength <- 20
+myColor <- colorRampPalette(c("blue", "white", "red"))(paletteLength)
+# length(breaks) == length(paletteLength) + 1
+# use floor and ceiling to deal with even/odd length pallettelengths
+myBreaks <- c(seq(min(nbDEG), 0, length.out=ceiling(paletteLength/2) + 1), 
+              seq(max(nbDEG)/paletteLength, max(nbDEG), length.out=floor(paletteLength/2)))
+
+#nbDEG = abs(nbDEG)
+
+#nbDEG = t(apply(nbDEG,1,function(x) x/max(x)))
+
+exc <- grep("Exc_",rownames(nbDEG),value = T)
+Inhib <- grep("Inhib_",rownames(nbDEG),value = T)
+NonNeuro <- c("NF Oligo","Oligo","OPC", "Astro","Endo","Microglia")
+
+
+paletteLength <- 20
+myColor <- colorRampPalette(c("blue", "white", "red"))(paletteLength)
+# length(breaks) == length(paletteLength) + 1
+# use floor and ceiling to deal with even/odd length pallettelengths
+myBreaks <- c(seq(min(nbDEG[exc,]), 0, length.out=ceiling(paletteLength/2) + 1), 
+              seq(max(nbDEG[exc,])/paletteLength, max(nbDEG[exc,]), length.out=floor(paletteLength/2)))
+
+ord = order(rowSums(abs(nbDEG[exc,])),decreasing = T)
+
+#ord = order(nbDEG[exc,1],decreasing = T)
+
+#ord = paste0("Exc_",c(8,4,13,6,7,2,3,5,9,10,11,1,12))
+
+H1 = Heatmap(nbDEG[exc[ord],1],cluster_rows = F,
+             col = colorRamp2(seq(0, max(nbDEG[exc,1]),length.out = 10), c("grey80",brewer.pal(9,"YlOrRd"))),
+             show_row_names = F,name="Up")
+H2 = Heatmap(abs(nbDEG[exc[ord],2]),cluster_rows = F,
+             col = colorRamp2(seq(0, max(abs(nbDEG[exc,2])),length.out = 10), c("grey80", brewer.pal(9,"YlGnBu")) ),
+             name="Down"
+             )
+
+H1+H2
+
+
+pheatmap(nbDEG[exc[ord],], 
+         color=myColor, 
+         breaks=myBreaks,
+         cluster_cols = F,
+         cluster_rows = F,
+         border_color = "black",
+         clustering_method = "average")
+```
+
+
+```{r}
+paletteLength <- 20
+myColor <- colorRampPalette(c("blue", "white", "red"))(paletteLength)
+# length(breaks) == length(paletteLength) + 1
+# use floor and ceiling to deal with even/odd length pallettelengths
+myBreaks <- c(seq(min(nbDEG[Inhib,]), 0, length.out=ceiling(paletteLength/2) + 1), 
+             seq(max(nbDEG[Inhib,])/paletteLength, max(nbDEG[Inhib,]), length.out=floor(paletteLength/2)))
+
+ord = order(rowSums(abs(nbDEG[Inhib,])),decreasing = T)
+
+
+
+
+#ord = order(nbDEG[Inhib,1],decreasing = T)
+
+#ord = paste0("Inhib_",c(7,2,6,9,10,5,1,8,12,11,3,4))
+
+H1 = Heatmap(nbDEG[Inhib[ord],1],cluster_rows = F,
+             col = colorRamp2(seq(0, max(nbDEG[Inhib,1]),length.out = 10), c("grey80",brewer.pal(9,"YlOrRd"))),
+             show_row_names = F,name="Up")
+H2 = Heatmap(abs(nbDEG[Inhib[ord],2]),cluster_rows = F,
+             col = colorRamp2(seq(0, max(abs(nbDEG[Inhib,2])),length.out = 10), c("grey80", brewer.pal(9,"YlGnBu"))),
+             name="Down"
+             )
+H1+H2
+
+
+pheatmap(nbDEG[Inhib[ord],], 
+         color=myColor, 
+         breaks=myBreaks,
+         cluster_cols = F,
+         cluster_rows = F,
+         border_color = "black",
+         clustering_method = "average")
+
+```
+
+
+```{r}
+
+paletteLength <- 20
+myColor <- colorRampPalette(c("blue", "white", "red"))(paletteLength)
+# length(breaks) == length(paletteLength) + 1
+# use floor and ceiling to deal with even/odd length pallettelengths
+myBreaks <- c(seq(min(nbDEG[NonNeuro,]), 0, length.out=ceiling(paletteLength/2) + 1), 
+             seq(max(nbDEG[NonNeuro,])/paletteLength, max(nbDEG[NonNeuro,]), length.out=floor(paletteLength/2)))
+
+pheatmap(nbDEG[NonNeuro,], 
+         color=myColor, 
+         breaks=myBreaks,
+         cluster_cols = F,
+         cluster_rows = T,
+         border_color = "black",
+         clustering_method = "average")
+```
+
+
+```{r}
+
+NonNeuro = c("Endo","Oligo","Astro","NF Oligo","Microglia","OPC")
+
+
+ord = order(rowSums(abs(nbDEG[NonNeuro,])),decreasing = T)
+
+
+#ord = order(nbDEG[NonNeuro,1],decreasing = T)
+
+H1 = Heatmap(nbDEG[NonNeuro[ord],1],cluster_rows = F,
+             col = colorRamp2(seq(0, max(nbDEG[NonNeuro,1]),length.out = 10), c("grey80",brewer.pal(9,"YlOrRd"))),
+             show_row_names = F,name="Up")
+H2 = Heatmap(abs(nbDEG[NonNeuro[ord],2]),cluster_rows = F,
+             col = colorRamp2(seq(0, max(abs(nbDEG[NonNeuro,2])),length.out = 10), c("grey80", brewer.pal(9,"YlGnBu"))),
+             name="Down"
+             )
+H1+H2
+
+
+
+```
+
+
+# Plot the number of DEG as bar-plot
+
+```{r}
+require(reshape2)
+
+
+nbDEG2= abs(nbDEG)
+
+
+nbDEG2 = apply(nbDEG2, 1, function(x) x/sum(x))
+
+nbDEG2 = melt(nbDEG2)
+
+
+nbDEG2$Var2 <- factor(nbDEG2$Var2,levels = c(NonNeuro, Inhib,paste0("Exc_",1:13)))
+
+ggplot(nbDEG2, aes(x=Var2,y=value, fill=Var1)) + geom_bar(stat = "identity") + 
+  theme_bw() + 
+  scale_fill_aaas() + 
+  coord_flip() + 
+  theme(text = element_text(colour = "black"), 
+        plot.title = element_text(hjust = 0.5)) + 
+  xlab("Proportion (%)") + 
+  ylab("Cluster") + 
+  ggtitle("Proportion of the Up/Down regulated genes\n during P21 to Adult transition")
+```
+
+
+# Proportion of Up/Down
+
+```{r}
+nbDEG_prop = t(apply(nbDEG,1,function(x) abs(x)/sum(abs(x))))
+
+nbDEG_prop_mlt = melt(nbDEG_prop)
+colnames(nbDEG_prop_mlt) <- c("Cluster","Direction","Proportion")
+
+nbDEG_prop_mlt$Cluster = factor(nbDEG_prop_mlt$Cluster,levels = rev(c("Astro","Endo","Microglia","NF Oligo","Oligo","OPC",
+                                                                  paste0("Exc_",1:13),paste0("Inhib_",1:12))))
+
+
+ggplot(nbDEG_prop_mlt, aes(x=Cluster,y=Proportion, fill=Direction)) + geom_bar(stat = "identity") +
+  theme_bw() + scale_fill_aaas() + coord_flip() +
+  theme(text = element_text(colour = "black"), 
+        plot.title = element_text(hjust = 0.5)) + 
+  xlab("Proportion (%)") + 
+  ylab("Cluster") + 
+  ggtitle("Proportion of the Up/Down regulated genes\n during P21 to Adult transition")
+
+```
+
+
+## Save results for all 
+
+```{r}
+require(xlsx)
+P21_Adult_merged_DEG_filtered= list()
+
+dir.create("Compare_with_P21",showWarnings = F)
+dir.create("Compare_with_P21/DEG",showWarnings = F)
+
+
+epigenetic_regulators <- read.csv("Data/EpiGenes_main.csv")
+epigenetic_regulators_genes = as.character(epigenetic_regulators$MGI_symbol)
+epigenetic_regulators_genes = epigenetic_regulators_genes[epigenetic_regulators_genes != "#"]
+
+
+
+cellTypes = sort(unique(gsub("_\\d+","", names(P21_Adult_merged_DEG))))
+
+epigenetic_regulators_byClus = list()
+
+
+for(ct in cellTypes){
+
+  message(paste0("**** ",ct," ****"))
+  dname = paste0("Compare_with_P21/DEG/",ct,"_DEG", showWarnings = F)
+  dir.create(dname,showWarnings = F)
+  
+  pos <- grep(ct,names(P21_Adult_merged_DEG))
+  
+  for(cls in names(P21_Adult_merged_DEG)[pos]){
+    cat(paste0(cls,"\r"))
+    P21_Adult_merged_DEG[[cls]]$avg_log2FC = log2(exp(P21_Adult_merged_DEG[[cls]]$avg_logFC))  
+    # P21_Adult_merged_DEG_filtered[[cls]] = subset(P21_Adult_merged_DEG[[cls]], (abs(pct.1 - pct.2)/max(pct.1,pct.2)) >= 0.2 & p_val_adj < 0.05 & abs(avg_logFC) > log(1.5) & (pct.1 < 0.8 | pct.2 < 0.8))
+    
+    P21_Adult_merged_DEG_filtered[[cls]] = subset(P21_Adult_merged_DEG[[cls]], p_val_adj < 0.05 & abs(avg_logFC) > log(1.5) & (pct.1 < 0.9 | pct.2 < 0.9))
+    
+    
+    P21_Adult_merged_DEG_filtered[[cls]]$MGI_symbol = rownames(P21_Adult_merged_DEG_filtered[[cls]])
+    
+    epigenetic_regulators_byClus[[cls]] = merge(P21_Adult_merged_DEG_filtered[[cls]],epigenetic_regulators,by = "MGI_symbol",all.x = F,sort = F)
+    
+    
+    
+    fname = paste0(dname,"/",ct,"_",cls,".xlsx")  
+    write.xlsx(P21_Adult_merged_DEG_filtered[[cls]],file = fname)
+    
+    if(nrow(epigenetic_regulators_byClus[[cls]])>0){
+      fname = paste0(dname,"/",ct,"_",cls,"_DEG_epifactors.xlsx")      
+      write.xlsx(epigenetic_regulators_byClus[[cls]],file = fname) 
+    }
+  }
+}
+
+
+```
+
+
+
+
+
+
+# Common DEG
+
+```{r}
+load("FinalObjects/P21_Adult_merged_DEG.RData")
+common_DEG <- NULL
+
+cellTypes = c("Exc_","Inhib_")
+
+common_DEG <- list()
+cluster_specific_DEG <- list()
+
+ext_cluster_specific = list()
+
+dir.create("Compare_with_P21/DEG/ClusterSpecific_DEG",showWarnings = F)
+
+for(ct in cellTypes){
+  exc = grep(ct, names(P21_Adult_merged_DEG), value = T)
+  
+  for(cls in exc){
+    
+    if(nrow(P21_Adult_merged_DEG[[cls]])>0){
+      tmp = subset(P21_Adult_merged_DEG[[cls]],  p_val_adj < 0.05 & abs(avg_logFC) > log(1.5) & (pct.1 < 0.9 | pct.2 < 0.9))
+    if(is.null(common_DEG[[ct]])){
+      common_DEG[[ct]] = rownames(tmp)
+    }else{
+      common_DEG[[ct]] = intersect(common_DEG[[ct]], rownames(tmp))
+    } 
+    }
+    print(paste0(cls," : ",length(common_DEG[[ct]])))
+  }
+  
+  print("***********")
+  cluster_specific_DEG[[ct]] = list()
+  
+  for(cls in exc){
+    
+    if(nrow(P21_Adult_merged_DEG[[cls]])>0){
+      tmp = subset(P21_Adult_merged_DEG[[cls]], p_val_adj < 0.05 & abs(avg_logFC) > log(1.5) & (pct.1 < 0.9 | pct.2 < 0.9))
+      cluster_specific_DEG[[ct]][[cls]] = setdiff(rownames(tmp),common_DEG)
+    }
+  }
+  
+  for(cls in exc){
+    print(cls)
+    other = setdiff(names(cluster_specific_DEG[[ct]]),cls)
+    other = unique(unlist(cluster_specific_DEG[[ct]][other]))
+    cluster_specific_DEG[[ct]][[cls]] = setdiff(cluster_specific_DEG[[ct]][[cls]],other)
+    cluster_specific_DEG[[ct]][[cls]] = P21_Adult_merged_DEG[[cls]][cluster_specific_DEG[[ct]][[cls]],]
+    
+    if(nrow(cluster_specific_DEG[[ct]][[cls]])>0){
+      fname = paste0("Compare_with_P21/DEG/ClusterSpecific_DEG/",cls,"_specific.xlsx")
+    write.xlsx(cluster_specific_DEG[[ct]][[cls]], fname)  
+    }
+    
+  }
+  
+
+  # deg_nb = max(sapply(cluster_specific_DEG[[ct]], length))
+  # 
+  # ext_cluster_specific[[ct]] = matrix("",ncol=length(cluster_specific_DEG[[ct]]), nrow = deg_nb)
+  # colnames(ext_cluster_specific[[ct]]) <- names(cluster_specific_DEG[[ct]])
+  # 
+  # for(cls in names(ext_cluster_specific[[ct]])){
+  #   
+  #   ext_cluster_specific[[ct]][1:length( cluster_specific_DEG[[ct]][[cls]]),cls ] = cluster_specific_DEG[[ct]][[cls]]
+  # }
+}
+
+
+
+write.csv(ext_cluster_specific,file = "P21/inhib_cluster_specific_genes.csv")
+```
+
+
+
+# Plot some volcano plots (Fig. 4D)
+
+```{r}
+require(ggpubr)
+#load("P21/P21_Adult_merged_DEG.RData")
+
+volcano_plots = data.frame()
+
+tohighlight = data.frame()
+
+for(cls in c("Exc_8","Exc_4","Exc_13","Exc_6","Inhib_7","Oligo")){
+  
+  #pos = grep("P21_",P21_Adult_merged_DEG[[cls]]$cluster)
+  #P21_Adult_merged_DEG[[cls]]$avg_logFC[pos] = -P21_Adult_merged_DEG[[cls]]$avg_logFC[pos]
+  
+  P21_Adult_merged_DEG[[cls]]$avg_log2FC = log2(exp(P21_Adult_merged_DEG[[cls]]$avg_logFC))
+  
+  P21_Adult_merged_sig_DEG[[cls]] = subset(P21_Adult_merged_DEG[[cls]], 
+                                           p_val_adj < 0.05 & abs(avg_logFC) > log(2) & (pct.1 < 0.9 | pct.2 < 0.9))
+
+  
+  
+  
+  df = P21_Adult_merged_DEG[[cls]]
+  df$toHighlit="NO"
+  #df[head(rownames(P21_Adult_merged_sig_DEG[[cls]]),100),]$toHighlit="YES"
+  df[rownames(P21_Adult_merged_sig_DEG[[cls]]),]$toHighlit="YES"
+  df$cluster = cls
+  volcano_plots = rbind(volcano_plots, df)
+  
+  #tohighlight = rbind(tohighlight, head(df))
+}
+
+
+volcano_plots$cluster = factor(volcano_plots$cluster,levels = c("Exc_4","Exc_6","Exc_8","Exc_13","Inhib_7","Oligo"))
+
+ggplot(volcano_plots, aes(x=avg_log2FC, y=-log10(p_val_adj), color=toHighlit)) + geom_point(size=0.9) + theme_bw()+ theme(panel.grid = element_blank()) + facet_wrap(~cluster,scales = "free_y",nrow = 2) + scale_color_manual(values = c("grey80","red")) + geom_vline(xintercept = c(-1,1),linetype="dashed") 
+
+```
+
+# classifiy DEG by their class 
+
+```{r}
+require(readxl)
+
+Genes_biotypes <- data.frame()
+f_exc <- list.files("Compare_with_P21/DEG/IPA_analysis/Molecule/",pattern = "Exc_",full.names = T)
+f_inhib <- list.files("Compare_with_P21/DEG/Inhib_DEG/Molecules/",full.names = T)
+f_nonNeuro <- list.files("Compare_with_P21/DEG/Nonneuro_Molecules/",full.names = T)
+
+files <- c(f_exc, f_inhib, f_nonNeuro)
+
+for(f in files){
+  tmp = as.data.frame(read_excel(f,sheet = 1,skip = 1))
+  df = tmp[,c(3,7)]
+  colnames(df) = c("Symbol","Type")
+  Genes_biotypes = rbind(Genes_biotypes, df)
+}
+
+Genes_biotypes = unique(Genes_biotypes)
+
+
+DEG_Genes_biotypes <- data.frame()
+
+for(cls in names(P21_Adult_merged_DEG)){
+  message(cls)
+  tmp = subset(P21_Adult_merged_DEG[[cls]], p_val_adj < 0.05 & abs(avg_logFC) > log(1.5) & (pct.1 < 0.9 | pct.2 < 0.9))
+  tmp$gene = rownames(tmp)
+  tmp$cluster = cls
+  pos = match(toupper(tmp$gene), toupper(Genes_biotypes$Symbol))
+  tmp$bioType = Genes_biotypes$Type[pos]
+  
+  #pos <- grep("P21_",tmp$cluster)
+  #tmp$avg_logFC[pos] = -1 * tmp$avg_logFC[pos]
+  #tmp$cluster <- gsub("Adult_","", tmp$cluster)  
+  #tmp$cluster <- gsub("P21_","", tmp$cluster)  
+  
+  if(nrow(DEG_Genes_biotypes)>0){
+    tmp =  tmp[,colnames(DEG_Genes_biotypes)]
+  }
+  
+  DEG_Genes_biotypes = rbind(DEG_Genes_biotypes,tmp)
+}
+
+
+DEG_Genes_biotypes <- subset(DEG_Genes_biotypes, !is.na(bioType))
+
+DEG_Genes_biotypes$avg_logFC = log2(exp(DEG_Genes_biotypes$avg_logFC))
+
+
+ggplot(DEG_Genes_biotypes, aes(x=bioType, y=avg_logFC,fill=bioType)) + 
+  geom_boxplot() + 
+  theme_bw() + facet_grid(cluster~.) + 
+  ggsci::scale_fill_d3("category20c") + 
+  theme(axis.text.x = element_text(angle = 30,hjust = 1)) + 
+  geom_hline(yintercept = 0,color="red")
+
+```
+
+
+# Plot the percent of 
+
+```{r fig.height=4, fig.width=10}
+
+library(dplyr)
+
+
+DEG_Genes_biotypes2 = subset(DEG_Genes_biotypes, bioType!="other")
+
+DEG_Genes_biotypes_percent <- DEG_Genes_biotypes2 %>% 
+  group_by(cluster,bioType) %>% 
+  summarise(count=n()) %>% 
+  mutate(perc=100 *count/sum(count))
+
+Inhib = paste0("Inhib_",1:12)
+NonNeuro = c("Astro","Endo","Microglia","NF Oligo","Oligo","OPC")
+
+DEG_Genes_biotypes_percent$cluster <- factor(DEG_Genes_biotypes_percent$cluster,levels = c(paste0("Exc_",1:13),Inhib,NonNeuro ))
+
+ggplot(DEG_Genes_biotypes_percent, aes(x=cluster, y=perc, fill=bioType)) + 
+    geom_bar(stat = "identity",color="black") + 
+    theme_bw() + 
+    scale_fill_manual(values = c(brewer.pal(9,"Set1"),ggsci::pal_d3()(5))) + 
+    theme(axis.text.x = element_text(angle = 30,hjust = 1),plot.title = element_text(hjust = 0.5)) + ggtitle("Proporion of DEG gene-types ")
+```
+
+
+```{r fig.height=8, fig.width=7}
+DEG_Genes_biotypes_mat = table(DEG_Genes_biotypes$cluster, DEG_Genes_biotypes$bioType)
+
+DEG_Genes_biotypes_mat = as.matrix(DEG_Genes_biotypes_mat)
+
+
+pheatmap(log2(DEG_Genes_biotypes_mat+1),border_color = "black",
+         number_color = "black",display_numbers = DEG_Genes_biotypes_mat,
+         number_format = "%.0f",clustering_method = "ward.D2")
+```
+
+
+# Get the common DEG TF
+
+```{r}
+common_DE_TF <- NULL
+for(clus in unique(DEG_Genes_biotypes$cluster)){
+  
+  if(clus!="Pvalb"){
+    tmp = subset(DEG_Genes_biotypes, cluster == clus & bioType =="transcription regulator")
+  
+    if(is.null(common_DE_TF)){
+      common_DE_TF = unique(tmp$gene)
+    }else{
+      common_DE_TF <- intersect(common_DE_TF, tmp$gene)
+    }  
+  }
+  
+}
+common_DE_TF
+```
+
+
+```{r}
+common_DE_TF_Exc <- NULL
+exc_clus = grep("Exc_",unique(DEG_Genes_biotypes$cluster),value = T)
+for(clus in exc_clus){
+    tmp = subset(DEG_Genes_biotypes, cluster == clus & bioType =="transcription regulator")
+  
+    if(is.null(common_DE_TF_Exc)){
+      common_DE_TF_Exc = unique(tmp$gene)
+    }else{
+      common_DE_TF_Exc <- intersect(common_DE_TF_Exc, tmp$gene)
+    }  
+}
+common_DE_TF_Exc
+```
+
+```{r}
+common_DE_TF_Inhib <- NULL
+for(clus in Inhib){
+    tmp = subset(DEG_Genes_biotypes, cluster == clus & bioType =="transcription regulator")
+  if(clus!="Pvalb"){
+    if(is.null(common_DE_TF_Inhib)){
+      common_DE_TF_Inhib = unique(tmp$gene)
+    }else{
+      common_DE_TF_Inhib <- intersect(common_DE_TF_Inhib, tmp$gene)
+    }  
+  }
+}
+common_DE_TF_Inhib
+```
+
+
+
+```{r}
+common_DE_Channels <- NULL
+for(clus in unique(DEG_Genes_biotypes$cluster)){
+  
+  if(clus!="Pvalb"){
+    tmp = subset(DEG_Genes_biotypes, cluster == clus & bioType =="ion channel")
+  
+    if(is.null(common_DE_Channels)){
+      common_DE_Channels = unique(tmp$gene)
+    }else{
+      common_DE_Channels <- intersect(common_DE_Channels, tmp$gene)
+    }  
+  }
+}
+common_DE_Channels
+```
+
+
+```{r}
+common_DE_Channels_Exc <- NULL
+exc_clus = grep("Exc_",unique(DEG_Genes_biotypes$cluster),value = T)
+ion_exc = c()
+for(clus in exc_clus){
+    tmp = subset(DEG_Genes_biotypes, cluster == clus & bioType =="ion channel")
+    
+    ion_exc= c(ion_exc, tmp$gene)
+    if(nrow(tmp) ==0) next
+    if(is.null(common_DE_Channels_Exc)){
+      common_DE_Channels_Exc = unique(tmp$gene)
+    }else{
+      print(length(common_DE_Channels_Exc))
+      common_DE_Channels_Exc <- intersect(common_DE_Channels_Exc, tmp$gene)
+    }  
+}
+common_DE_Channels_Exc
+```
+
+
+```{r}
+common_DE_Channels_Inhib <- NULL
+for(clus in Inhib){
+    tmp = subset(DEG_Genes_biotypes, cluster == clus & bioType =="ion channel")
+  if(clus!="Pvalb" | nrow(tmp) >0){
+    if(is.null(common_DE_Channels_Inhib)){
+      common_DE_Channels_Inhib = unique(tmp$gene)
+    }else{
+      common_DE_Channels_Inhib <- intersect(common_DE_Channels_Inhib, tmp$gene)
+    }  
+  }
+}
+common_DE_Channels_Inhib
+```
+
+
+# Count the number of overlapping DEG for each biotype
+
+```{r}
+
+common_DEG_perBiotype = list()
+for(bt in sort(unique(DEG_Genes_biotypes$bioType))){
+  
+  print(bt)
+  
+  common_DEG_perBiotype[[bt]] <- matrix(0,
+                                        nrow=length(sort(unique(DEG_Genes_biotypes$cluster))),
+                                        ncol=length(sort(unique(DEG_Genes_biotypes$cluster)))
+                                        )
+  colnames(common_DEG_perBiotype[[bt]]) = sort(unique(DEG_Genes_biotypes$cluster))
+  rownames(common_DEG_perBiotype[[bt]]) = sort(unique(DEG_Genes_biotypes$cluster))
+  
+  for(clus1 in sort(unique(DEG_Genes_biotypes$cluster))){
+    tmp1 = subset(DEG_Genes_biotypes, cluster == clus1 & bioType==bt)
+    for(clus2 in sort(unique(DEG_Genes_biotypes$cluster))){
+      tmp2 = subset(DEG_Genes_biotypes, cluster == clus2 & bioType==bt)  
+      
+      common_DEG_perBiotype[[bt]][clus1, clus2] = length(intersect(tmp1$gene, tmp2$gene))
+      common_DEG_perBiotype[[bt]][clus2, clus1] = length(intersect(tmp1$gene, tmp2$gene))
+    }
+  }
+  
+  diag(common_DEG_perBiotype[[bt]]) =0
+}
+
+
+dir.create("P21/DEG_Per_Biotype",showWarnings = F)
+for(bt in names(common_DEG_perBiotype)){
+  
+  fname = paste0("P21/DEG_Per_Biotype/",bt,".pdf")
+  pdf(fname,width = 7,height = 8)
+  pheatmap(common_DEG_perBiotype[[bt]],clustering_method = "ward.D2")
+  dev.off()
+}
+
+```
+
+
+
+```{r fig.height=10, fig.width=10}
+load("FinalObjects/P21_Adult_merged_DEG.RData")
+#P21_Adult_merged_DEG_sig <- list()
+
+
+clus_merged_GWAS_assoss <- matrix(0,
+                                  #nrow = length(unique(all_cell_inDD_saline_sobj@meta.data$L1_clusters)), 
+                                  nrow= length(P21_Adult_merged_DEG),
+                                  ncol=length(PFC_disease_GWAS_expressed_classes[["e-5"]]))
+
+#rownames(clus_merged_GWAS_assoss) <- sort(unique(all_cell_inDD_saline_sobj@meta.data$L1_clusters))
+rownames(clus_merged_GWAS_assoss) <-  names(P21_Adult_merged_DEG)
+colnames(clus_merged_GWAS_assoss) <- names(PFC_disease_GWAS_expressed_classes[["e-5"]])
+
+
+disease_DEG = lapply(names(PFC_disease_GWAS_expressed_classes[["e-5"]]), function(x) c())
+
+disease_DEG2 =  lapply(names(PFC_disease_GWAS_expressed_classes[["e-5"]]), function(x) data.frame())
+
+for(clus in names(P21_Adult_merged_DEG)){
+  print(clus)
+  
+  
+  #colnames(P21_Adult_merged_DEG[[clus]])[1] = "Gene"
+  #P21_Adult_merged_DEG_sig[[clus]] <- subset(P21_Adult_merged_DEG[[clus]], 
+  #                                           p_val_adj < 0.05 & abs(avg_logFC) > log(1.5) & (pct.1 < 0.9 | pct.2 < 0.9))
+  fname = paste0("Compare_with_P21/DEG/All/",clus,".xlsx")
+  P21_Adult_merged_DEG_sig[[clus]] = read.xlsx(fname,sheetIndex = 1,as.data.frame = T)
+  colnames(P21_Adult_merged_DEG_sig[[clus]])[1] = "Gene"
+  
+  
+  for(disease in names(PFC_disease_GWAS_expressed_classes[["e-5"]])){
+    
+    #spec = subset(PFC_disease_GWAS_expressed_classes[["e-5"]][[disease]], category != "non-specific")
+    spec = PFC_disease_GWAS_expressed_classes[["e-5"]][[disease]]
+    ovp = intersect(as.character(P21_Adult_merged_DEG_sig[[clus]]$Gene),  as.character(spec$gene))
+  
+    
+    if(length(ovp) >0){
+      tmp =  subset(P21_Adult_merged_DEG_sig[[clus]], Gene %in% as.character(spec$gene))
+      tmp$cluster = clus
+      tmp$gene =NULL
+      if(is.null(disease_DEG[[disease]])){
+      disease_DEG[[disease]] = ovp
+      disease_DEG2[[disease]] = tmp
+      }else{
+        disease_DEG[[disease]] = unique(c(disease_DEG[[disease]],ovp))
+        disease_DEG2[[disease]] = rbind(disease_DEG2[[disease]],tmp)
+      }
+    }
+  
+    clus_merged_GWAS_assoss[clus, disease] = length(ovp)
+  }
+}
+
+
+dir.create("Compare_with_P21/DEG/GWAS",showWarnings = F)
+
+for(disease in names(disease_DEG2)){
+  fname = paste0(C,disease,"_P21_DEG_GWAS.csv") 
+  write.csv(disease_DEG2[[disease]],file = fname)
+}
+
+ord <- c("Astro","Endo","Microglia","NF Oligo","Oligo","OPC",paste0("Exc_",1:13),paste0("Inhib_",1:12))
+
+diseases_toUse <- setdiff(colnames(clus_merged_GWAS_assoss),
+                          c("BEHAVIOR","Parkinson","AdolescenceChildhood aggressive","Nicotine","Tourett Syndrome","Cocaine Dependence"))
+
+
+dir.create("P21/GWAS",showWarnings = F)
+pdf("P21/GWAS/DEG_GWAS_heatmap.pdf",width = 10,height = 10)
+ph= pheatmap(t(clus_merged_GWAS_assoss[ord,diseases_toUse]),
+         color = colorRampPalette(rev(brewer.pal(n = 7, name ="Spectral")))(100),
+         display_numbers = T,
+         gaps_col = c(6,19),
+         cluster_rows = T,
+         border_color = "black",
+         cluster_cols = F, 
+         number_format = "%d",
+         number_color = "black")
+dev.off()
+
+```
+
+
+# Get percent of DEG genes per-disease 
+
+```{r}
+percent_DEG_GWAS <- matrix(0,ncol = 1,nrow = length(diseases_toUse))
+rownames(percent_DEG_GWAS) = diseases_toUse
+
+for(disease in diseases_toUse){
+  percent_DEG_GWAS[disease,] = 100 * length(disease_DEG[[disease]])/nrow(PFC_disease_GWAS_expressed_classes[["e-5"]][[disease]])
+}
+
+percent_DEG_GWAS = percent_DEG_GWAS[order(percent_DEG_GWAS,decreasing = T),]
+
+knitr::kable(percent_DEG_GWAS)
+```
+
+
+```{r}
+lbls  = t(clus_merged_GWAS_assoss[ord,names(percent_DEG_GWAS)])
+lbls[lbls==0] = ""
+
+pheatmap(log2(t(clus_merged_GWAS_assoss[ord,names(percent_DEG_GWAS)])+1),
+         color = c("grey80",colorRampPalette(rev(brewer.pal(n = 7, name ="Spectral")))(20)),
+         display_numbers = lbls,
+         gaps_col = c(6,19),
+         cluster_rows = F,
+         border_color = "black",
+         cluster_cols = F, 
+         number_format = "%d",
+         number_color = "black")
+
+```
+
+# Get the DEG for some disease
+
+## Schizophrenia
+
+```{r}
+
+schizo_DEG <- matrix(0, ncol=length(P21_Adult_merged_DEG_sig),nrow=0)
+colnames(schizo_DEG) = names(P21_Adult_merged_DEG_sig)
+
+for(clus in names(P21_Adult_merged_DEG_sig)){
+  rownames(P21_Adult_merged_DEG_sig[[clus]]) = P21_Adult_merged_DEG_sig[[clus]]$Gene
+  spec = PFC_disease_GWAS_expressed_classes[["e-5"]]$Schizophrenia
+  ovp = intersect(rownames(P21_Adult_merged_DEG_sig[[clus]]),  as.character(spec$gene))
+  
+  notIn = setdiff(ovp, rownames(schizo_DEG))
+  if(length(notIn) >0){
+    tmp = matrix(0, nrow=length(notIn),ncol =length(P21_Adult_merged_DEG_sig))
+    rownames(tmp) =  notIn  
+    colnames(tmp) = names(P21_Adult_merged_DEG_sig)
+    
+    schizo_DEG = rbind(schizo_DEG,tmp)
+  }
+  
+  schizo_DEG[ovp,clus] = log2(exp(P21_Adult_merged_DEG_sig[[clus]][ovp,]$avg_logFC))
+}
+
+schizo_DEG_class = schizo_DEG
+
+schizo_DEG_class[schizo_DEG <log2(1.5) & schizo_DEG >-log2(1.5)] = 0
+schizo_DEG_class[schizo_DEG >=log2(1.5) & schizo_DEG <=log2(2)] = 1
+schizo_DEG_class[schizo_DEG >log2(2) ] = 2
+
+schizo_DEG_class[schizo_DEG < -log2(1.5) & schizo_DEG > -log2(2)] = -1
+schizo_DEG_class[schizo_DEG < -log2(2) & schizo_DEG > -log2(4)] = -2
+schizo_DEG_class[schizo_DEG < -log2(2) & schizo_DEG >= -log2(4)] = -3
+schizo_DEG_class[schizo_DEG < -log2(4) ] = -3
+
+
+cols = c(ggsci::pal_material("blue")(10)[c(10,5,3)],"grey80", ggsci::pal_material("red")(10)[c(3,10)] )
+
+schizo_DEG_class = schizo_DEG_class[,sort(colnames(schizo_DEG_class))]
+
+schizo_DEG_class = schizo_DEG_class[,c(1,2,28:31,3:27)]
+
+cs = colSums(abs(schizo_DEG_class))
+
+pheatmap(schizo_DEG_class[,cs>0],cluster_cols =F,cluster_rows = F,display_numbers = F,number_color = "black",color = cols)
+
+```
+
+
+
+
+
+## bipolar
+
+```{r}
+
+bipolar_DEG <- matrix(0, ncol=length(P21_Adult_merged_DEG_sig),nrow=0)
+colnames(bipolar_DEG) = names(P21_Adult_merged_DEG_sig)
+
+for(clus in names(P21_Adult_merged_DEG_sig)){
+  spec = PFC_disease_GWAS_expressed_classes[["e-5"]]$Bipolar
+  ovp = intersect(rownames(P21_Adult_merged_DEG_sig[[clus]]),  as.character(spec$gene))
+  
+  notIn = setdiff(ovp, rownames(bipolar_DEG))
+  if(length(notIn) >0){
+    tmp = matrix(0, nrow=length(notIn),ncol =length(P21_Adult_merged_DEG_sig))
+    rownames(tmp) =  notIn  
+    colnames(tmp) = names(P21_Adult_merged_DEG_sig)
+    
+    bipolar_DEG = rbind(bipolar_DEG,tmp)
+  }
+  
+  bipolar_DEG[ovp,clus] = log2(exp(P21_Adult_merged_DEG_sig[[clus]][ovp,]$avg_logFC))
+}
+
+bipolar_DEG_class = bipolar_DEG
+
+bipolar_DEG_class[bipolar_DEG <log2(1.5) & bipolar_DEG >-log2(1.5)] = 0
+bipolar_DEG_class[bipolar_DEG >=log2(1.5) & bipolar_DEG <=log2(2)] = 1
+bipolar_DEG_class[bipolar_DEG >log2(2) ] = 2
+
+bipolar_DEG_class[bipolar_DEG < -log2(1.5) & bipolar_DEG > -log2(2)] = -1
+bipolar_DEG_class[bipolar_DEG < -log2(2) & bipolar_DEG > -log2(4)] = -2
+bipolar_DEG_class[bipolar_DEG < -log2(2) & bipolar_DEG >= -log2(4)] = -3
+bipolar_DEG_class[bipolar_DEG < -log2(4) ] = -3
+
+
+cols = c(ggsci::pal_material("blue")(10)[c(10,5,3)],"grey80", ggsci::pal_material("red")(10)[c(3,10)] )
+
+bipolar_DEG_class = bipolar_DEG_class[,sort(colnames(bipolar_DEG_class))]
+
+bipolar_DEG_class = bipolar_DEG_class[,c(1,2,28:31,3:27)]
+
+cs = colSums(abs(bipolar_DEG_class))
+
+pheatmap(bipolar_DEG_class[,cs>0],cluster_cols =F,cluster_rows = F,display_numbers = F,number_color = "black",color = cols)
+
+```
+
+# Plot the heatmap in a tSNE plot
+
+```{r}
+
+disease_meta <- matrix(0, nrow = length(all_cell_inDD_saline_sobj@cell.names),ncol = ncol(clus_merged_GWAS_assoss) )
+rownames(disease_meta) <- all_cell_inDD_saline_sobj@cell.names
+colnames(disease_meta) <- colnames(clus_merged_GWAS_assoss)
+
+
+
+all_cell_inDD_saline_sobj@meta.data$merged_clusters = as.character(all_cell_inDD_saline_sobj@meta.data$L1_clusters)
+
+all_cell_inDD_saline_sobj@meta.data$merged_clusters = gsub("Astro_\\d+","Astro",all_cell_inDD_saline_sobj@meta.data$merged_clusters)
+all_cell_inDD_saline_sobj@meta.data$merged_clusters = gsub("Endo_\\d+","Endo",all_cell_inDD_saline_sobj@meta.data$merged_clusters)
+all_cell_inDD_saline_sobj@meta.data$merged_clusters = gsub("Microglia_\\d+","Microglia",all_cell_inDD_saline_sobj@meta.data$merged_clusters)
+all_cell_inDD_saline_sobj@meta.data$merged_clusters = gsub("NF Oligo_\\d+","NF Oligo",all_cell_inDD_saline_sobj@meta.data$merged_clusters)
+all_cell_inDD_saline_sobj@meta.data$merged_clusters = gsub("Oligo_\\d+","Oligo",all_cell_inDD_saline_sobj@meta.data$merged_clusters)
+all_cell_inDD_saline_sobj@meta.data$merged_clusters = gsub("OPC_\\d+","OPC",all_cell_inDD_saline_sobj@meta.data$merged_clusters)
+
+
+for(disease in colnames(clus_merged_GWAS_assoss)){
+  pos <- which(clus_merged_GWAS_assoss[,disease]>0)
+
+  
+  for(clus in rownames(clus_merged_GWAS_assoss)[pos]){
+    clus_pos <- which(all_cell_inDD_saline_sobj@meta.data$merged_clusters == clus)
+    disease_meta[clus_pos,disease] <- clus_merged_GWAS_assoss[clus, disease]
+  }
+}
+
+old = all_cell_inDD_saline_sobj@meta.data
+
+all_cell_inDD_saline_sobj@meta.data <- cbind(all_cell_inDD_saline_sobj@meta.data, as.data.frame(disease_meta))
+
+
+#col_fun = colorRamp2(seq(0,max(clus_merged_GWAS_assoss),length.out = 7), c("grey","#9b59b6", "#3498db", "#95a5a6", "#e74c3c", "#34495e", "#2ecc71")) 
+col_fun = colorRamp2(seq(0,max(clus_merged_GWAS_assoss),length.out = 11), brewer.pal(11,"Spectral")) 
+
+
+
+my_cols = c(brewer.pal(7,"Dark2")[-c(5,6,7)],"#40E0D0", pal_aaas()(10), brewer.pal(8,"Set1")[-c(3:5)])
+
+scizo_cols = c(brewer.pal(7,"Dark2")[-c(5,6,7)],"#40E0D0", pal_aaas()(10), brewer.pal(8,"Set1")[-c(3:5)])
+
+bipolar_cols = c(brewer.pal(7,"Dark2")[-c(5:7)],"#40E0D0",  brewer.pal(8,"Set1")[-c(3:7)], pal_tron()(10))
+
+#[c(1,2)],c("#40E0D0"),pal_jco()(10) )
+
+dir.create("Compare_with_P21/nbDEG_GWAS_tSNE_final",showWarnings = F)
+for(disease in colnames(clus_merged_GWAS_assoss)){
+  #hcols = colorRampPalette(pal_material("pink")(10)[-1])(max(clus_merged_GWAS_assoss[,disease]))
+  col_fun = colorRamp2(seq(0,max(clus_merged_GWAS_assoss[,disease]),length.out =length(my_cols)), my_cols ) # c("#40E0D0","#4b6cb7", "#FF8C00","#FF0080")) 
+  hcols = col_fun(sort(unique(clus_merged_GWAS_assoss[,disease])))
+  fname = paste0("Compare_with_P21/nbDEG_GWAS_tSNE_final/",disease,"_nbDEGGWAS_tSNE.pdf")
+  
+  #pdf(fname,width = 6,height = 5)
+  p=TSNEPlot(all_cell_inDD_saline_sobj,pt.size = 0.4, group.by=disease,colors.use = c("grey80",bipolar_cols),do.return=T) +
+  ggtitle(disease) + theme(plot.title = element_text(hjust = 0.5,color = "black",face = "bold"))
+  print(p)
+  #dev.off()
+}
+
+
+
+```
+
+# Plot a barplot of the DE GWAS genes in each cluster
+
+```{r}
+
+GWAS_DEG_df <- data.frame()
+
+for(clus in names(P21_Adult_merged_DEG)){
+  print(clus)
+
+  if(nrow(P21_Adult_merged_DEG_sig[[clus]])>0){
+    
+    for(disease in names(PFC_AE_expression_GWAS_ord)){
+      pos <- match(P21_Adult_merged_DEG_sig[[clus]]$gene, rownames(PFC_AE_expression_GWAS_ord[[disease]]))
+      
+      #pos[is.na(pos)]=0
+      if(sum(pos<30,na.rm = T)>0){
+        pos[is.na(pos)]=900
+        #print(paste0(clus,":",disease))
+        #clus_merged_GWAS_assoss[clus,disease] = sum(pos<30,na.rm = T)
+        toUse = P21_Adult_merged_DEG_sig[[clus]][pos<30,]
+        df <- data.frame(cluster = clus, disease= disease, 
+                         genes = toUse$gene,
+                         log2FC = log2(exp(toUse$avg_logFC)) )
+        GWAS_DEG_df <- rbind(GWAS_DEG_df, df)
+      }
+    }
+    }
+}
+
+
+
+for(dis in unique(GWAS_DEG_df$disease)){
+  tmp = subset(GWAS_DEG_df, disease == dis)
+  tmp$genes <- as.character(tmp$genes)
+  
+  tmp <- subset(tmp, genes != "Snap25")
+  ord = order(tmp$log2FC,decreasing = T)
+  tmp = tmp[ord,]
+  tmp$genes <- factor(tmp$genes,levels =  unique(tmp$genes))
+  
+  
+  #tmp = tmp[tmp$genes %in% head(levels(tmp$gene),5),]
+  tmp = tmp[unique(tmp$genes),]
+  
+  # p= ggplot(tmp, aes(x=genes,y=log2FC,fill=genes))+ geom_bar(stat = "identity",width = 0.5) +
+  # theme_bw() + scale_fill_locuszoom() #+
+  #facet_wrap(. ~cluster, scales = "free_x")  
+  
+  p =ggplot(tmp, aes(x=genes,y=log2FC,fill=gene))+ geom_bar(stat = "identity",width = 0.5) +
+    geom_hline(yintercept = log2(1.5),color="black",linetype=2) +
+  theme_bw() + scale_fill_manual(values = pal_locuszoom()(1)) + 
+    ggtitle(dis) +
+    theme(axis.text = element_text(color = "black",size = 11),
+          legend.position = "none",
+          plot.title = element_text(hjust = 0.5)) 
+    
+  
+  fname = paste0("P21/GWAS/",dis,"_P21_Adult_DEG.pdf")
+  
+  pdf(fname,width = nrow(tmp),height = 3)
+  print(p)
+  dev.off()
+}
+
+```
+
+
+# Compare with epigenic regulators 
+
+
+```{r}
+require(data.table)
+require(readxl)
+
+# Data downloaded from the EpiFactors DB : http://epifactors.autosome.ru/
+# link: http://epifactors.autosome.ru/public_data/v1.7.3/EpiGenes_main.csv
+
+epigenetic_regulators <- read.csv("Data/EpiGenes_main.csv")
+
+epigenetic_regulators_genes = as.character(epigenetic_regulators$MGI_symbol)
+
+epigenetic_regulators_genes = epigenetic_regulators_genes[epigenetic_regulators_genes != "#"]
+
+
+df_epigenetic_regulators <- list()
+
+df_epigenetic_regulators_pval_fc = list()
+
+
+P21_Adult_merged_DEG_sig = list()
+
+for(clus in names(P21_Adult_merged_DEG)){
+  print(clus)
+  
+  P21_Adult_merged_DEG_sig[[clus]] <- subset(P21_Adult_merged_DEG[[clus]], abs(avg_logFC) > log(1.5) & p_val_adj < 0.05)
+  
+  P21_Adult_merged_DEG_sig[[clus]]$avg_log2FC = log2(exp(P21_Adult_merged_DEG_sig[[clus]]$avg_logFC))
+
+  P21_Adult_merged_DEG_sig[[clus]]$avg_logFC = NULL
+  pos <- grep("P21_",P21_Adult_merged_DEG_sig[[clus]]$cluster)
+  
+  P21_Adult_merged_DEG_sig[[clus]]$avg_log2FC[pos] = -P21_Adult_merged_DEG_sig[[clus]]$avg_log2FC[pos]
+  P21_Adult_merged_DEG_sig[[clus]]$cluster = clus
+  
+  P21_Adult_merged_DEG_sig[[clus]] = P21_Adult_merged_DEG_sig[[clus]][,c(1,7,2:6)]
+  
+  if(nrow(P21_Adult_merged_DEG_sig[[clus]])>0){
+    
+    df_tf <- intersect(P21_Adult_merged_DEG_sig[[clus]]$gene,epigenetic_regulators_genes)
+    
+    df_epigenetic_regulators[[clus]] = df_tf
+    
+    if(nrow(P21_Adult_merged_DEG_sig[[clus]])>0){
+      df_epigenetic_regulators_pval_fc[[clus]] =  subset(P21_Adult_merged_DEG_sig[[clus]], gene %in% epigenetic_regulators_genes)  
+    }else{
+      df_epigenetic_regulators_pval_fc[[clus]] = matrix(0,0,1)
+    }
+  }
+}
+
+nbmax_tf <- max(sapply(df_epigenetic_regulators,length))
+
+df_epigenetic_regulators.df  <- matrix("",ncol=length(P21_Adult_merged_DEG), nrow= nbmax_tf)
+
+colnames(df_epigenetic_regulators.df) = names(P21_Adult_merged_DEG)
+
+for(clus in names(df_epigenetic_regulators)){
+  
+  if(length(df_epigenetic_regulators[[clus]])>0){
+    df_epigenetic_regulators.df[1:length(df_epigenetic_regulators[[clus]]), clus] = df_epigenetic_regulators[[clus]]  
+  }
+}
+
+dir.create("P21/Epigenetic_regulators",showWarnings = F)
+
+for(clus in names(df_epigenetic_regulators_pval_fc)){
+  
+  fname = paste0("P21/Epigenetic_regulators/", clus, "_epigenetic_reg_DE.csv")
+  
+  write.csv(df_epigenetic_regulators_pval_fc[[clus]], file=fname)
+}
+
+write.csv(df_epigenetic_regulators.df, "P21/Epigenetic_regulators/DE_epigenetics_reg_list.csv")
+
+
+
+P21_Adult_DEG_all <- data.frame()
+
+# save all in one file 
+for(clus in names(P21_Adult_merged_DEG)){
+  
+  tmp = P21_Adult_merged_DEG[[clus]]
+  tmp$gene = rownames(tmp)
+  tmp$avg_log2FC = log2(exp(tmp$avg_logFC))
+  tmp$cluster = clus
+  P21_Adult_DEG_all = rbind(P21_Adult_DEG_all, tmp)
+}
+
+write.csv(P21_Adult_DEG_all,file="Manuscript/P21_Adult_DEG_all.csv")
+```
+
+
+# IPA results
+
+```{r}
+require(readxl)
+IPA_results <- list.files("D:/Projects/Saline_Cocaine_Morphine_scRNASeq/20170808_PC_PooledAllSamples/PFC_pooledAllBatches_analysis/Clustering_08082018/Compare_with_P21/DEG/IPA_analysis/",pattern = "*.xls",full.names = T)
+IPA_results = grep("ALL",IPA_results,value = T)
+
+#IPA_results = grep("Excitatory",IPA_results,value = T)
+
+P21_pathway_enrichment <- data.frame()
+P21_disease_enrichemt <- data.frame()
+
+for(f in IPA_results){
+
+  smp = gsub(".xls","",basename(f))
+  print(smp)
+  smp = unlist(strsplit(smp,split = "_"))
+  
+  tmp = read_excel(f)
+  
+  colnames(tmp)[1]="info"
+  
+  headers_pos = grep("My Project", tmp$info)
+  
+  # Get pathways
+  pathways_hdr = grep("Canonical Pathways",tmp$info[headers_pos])
+  pathway_tbl = tmp[(headers_pos[pathways_hdr]+1):(headers_pos[pathways_hdr+1]-1),]
+  colnames(pathway_tbl) = pathway_tbl[1,]
+  pathway_tbl = pathway_tbl[-1,]
+  pathway_tbl = pathway_tbl[,!is.na(colnames(pathway_tbl))]
+  
+  pathway_tbl$cluster = smp[2]
+  colnames(pathway_tbl)[1:2] = c("Pathway","logPval")
+  pathway_tbl <- subset(pathway_tbl, logPval > -log10(0.05))
+  pathway_tbl <- pathway_tbl[order(pathway_tbl$logPval,decreasing = T),]
+  #P21_pathway_enrichment <- rbind(P21_pathway_enrichment,head(pathway_tbl,5))
+  P21_pathway_enrichment <- rbind(P21_pathway_enrichment,pathway_tbl)
+  
+  # Get diseases
+  
+  diseases_hdr = grep("Diseases and Bio Functions",tmp$info[headers_pos])
+  disease_tbl = tmp[(headers_pos[diseases_hdr]+1):(headers_pos[diseases_hdr+1]-1),]
+  colnames(disease_tbl) = disease_tbl[1,]
+  disease_tbl = disease_tbl[-1,]
+  disease_tbl = disease_tbl[,!is.na(colnames(disease_tbl))]
+  disease_tbl$cluster = smp[2]
+  
+  colnames(disease_tbl)[c(3:4,10)] <- c("Disease","pvalue","nbMolecules")
+  disease_tbl <- subset(disease_tbl, pvalue < 0.05)
+  
+  disease_tbl <- disease_tbl[order(disease_tbl$pvalue),]
+  
+  #P21_disease_enrichemt <- rbind(P21_disease_enrichemt, head(disease_tbl,5))
+  P21_disease_enrichemt <- rbind(P21_disease_enrichemt, disease_tbl)
+}
+
+# save results
+
+write.csv(P21_pathway_enrichment, file="Compare_with_P21/DEG/IPA_analysis/P21_pathway_enrichment_merged.csv")
+write.csv(P21_disease_enrichemt, file="Compare_with_P21/DEG/IPA_analysis/P21_disease_enrichemt_merged.csv")
+
+```
+
+```{r}
+#P21_pathway_enrichment <- read.csv("IPA_Cocaine_DEG/P21_pathway_enrichment_filtered.csv")
+colnames(P21_pathway_enrichment)[1] <- "Pathway"
+P21_pathway_enrichment$logPval <- as.numeric(P21_pathway_enrichment$logPval)
+P21_pathway_enrichment$Ratio <- as.numeric(P21_pathway_enrichment$Ratio)
+
+P21_pathway_enrichment <- P21_pathway_enrichment[grep("Hypusine",P21_pathway_enrichment$Pathway,invert = T,ignore.case = T),]
+
+P21_pathway_enrichment$cluster <- factor(P21_pathway_enrichment$cluster, levels = 1:13)
+
+ggplot(P21_pathway_enrichment, aes(x=cluster,y=Pathway,color=logPval)) + geom_point(aes(size=Ratio)) + theme_bw() + scale_color_gsea() +
+  theme(axis.text = element_text(colour = "black"))
+```
+
+
+
+```{r}
+require(reshape2)
+
+P21_pathway_enrichment_mat <- dcast(P21_pathway_enrichment,Pathway ~ cluster,value.var = "logPval",fill = 0)
+
+rownames(P21_pathway_enrichment_mat) <- P21_pathway_enrichment_mat$Pathway
+P21_pathway_enrichment_mat$Pathway = NULL
+
+# Order them by cluster
+P21_pathway_enrichment_mat = P21_pathway_enrichment_mat[,as.character(1:13)]
+labels_order <- c()
+
+for(cls in colnames(P21_pathway_enrichment_mat)){
+  P21_pathway_enrichment_mat = P21_pathway_enrichment_mat[order(P21_pathway_enrichment_mat[,cls],decreasing = T),]
+  
+  pos <- which(P21_pathway_enrichment_mat[,cls]>0)
+  
+  labels_order <- c(labels_order, rownames(P21_pathway_enrichment_mat)[pos])
+}
+
+labels_order = unique(labels_order)
+
+P21_pathway_enrichment_mat = data.matrix(P21_pathway_enrichment_mat)
+q99 = quantile(P21_pathway_enrichment_mat,0.99)
+P21_pathway_enrichment_mat[P21_pathway_enrichment_mat>q99]=q99
+
+
+
+pheatmap(P21_pathway_enrichment_mat[labels_order,],cluster_cols = F,cluster_rows = F,color = rev(brewer.pal(11,name = "Spectral")))
+```
+
+
+```{r fig.height=16, fig.width=9}
+P21_pathway_enrichment_mat_selected <- read.csv("Compare_with_P21/DEG/IPA_analysis/pathway_enrichment_matrix_SELECTED.csv",stringsAsFactors = F,row.names = 1)
+colnames(P21_pathway_enrichment_mat_selected) <- c(1:13)
+
+selected_labels_order = labels_order[labels_order %in% rownames(P21_pathway_enrichment_mat_selected)]
+
+selected_labels_order_selected = selected_labels_order[c(1:4,8:11,14,15,19,22:24,27,29,32,33,35,39,40,43,44,45,48,50,52:54,26,31)]
+
+pheatmap(P21_pathway_enrichment_mat[selected_labels_order_selected,],cluster_cols = F,cluster_rows = F,color = rev(brewer.pal(11,name = "Spectral")))
+```
+
+```{r}
+require(reshape2)
+
+P21_disease_enrichemt$pvalue = as.numeric(P21_disease_enrichemt$pvalue)
+
+P21_disease_enrichemt = unique(P21_disease_enrichemt)
+
+P21_disease_enrichemt$log10pval = -log10(P21_disease_enrichemt$pvalue)
+
+
+P21_disease_enrichemt2 = subset(P21_disease_enrichemt, pvalue < 0.01)
+P21_disease_enrichemt_mat <- dcast(P21_disease_enrichemt,Disease ~ cluster,value.var = "log10pval",fill = 0)
+
+rownames(P21_disease_enrichemt_mat) <- P21_disease_enrichemt_mat$Disease
+P21_disease_enrichemt_mat$Disease = NULL
+
+# Order them by cluster
+P21_disease_enrichemt_mat = P21_disease_enrichemt_mat[,as.character(1:13)]
+
+labels_order <- c()
+
+for(cls in colnames(P21_disease_enrichemt_mat)){
+  P21_disease_enrichemt_mat = P21_disease_enrichemt_mat[order(P21_disease_enrichemt_mat[,cls],decreasing = T),]
+  
+  pos <- which(P21_disease_enrichemt_mat[,cls]>0)
+  
+  labels_order <- c(labels_order, rownames(P21_disease_enrichemt_mat)[pos])
+}
+
+labels_order = unique(labels_order)
+
+
+P21_disease_enrichemt_mat = data.matrix(P21_disease_enrichemt_mat)
+q99 = quantile(P21_disease_enrichemt_mat,0.99)
+P21_disease_enrichemt_mat[P21_disease_enrichemt_mat>q99]=q99
+
+pheatmap(P21_disease_enrichemt_mat[labels_order,],cluster_cols = F,cluster_rows = F,color = rev(brewer.pal(11,name = "Spectral")))
+```
+
+
+```{r}
+P21_disease_enrichemt_mat_selected <- read.csv("Compare_with_P21/DEG/IPA_analysis/P21_disease_enrichemt_matrix_SELECTED.csv",stringsAsFactors = F,row.names = 1)
+colnames(P21_disease_enrichemt_mat_selected) <- c(1:13)
+
+selected_labels_order = labels_order[labels_order %in% rownames(P21_disease_enrichemt_mat_selected)]
+pheatmap(P21_disease_enrichemt_mat[selected_labels_order,],cluster_cols = F,cluster_rows = F,color = rev(brewer.pal(11,name = "Spectral")))
+```
+
+
+# Epifactors higlihted by Aritra
+
+```{r}
+require(readxl)
+require(dplyr)
+
+
+tmp = readxl::read_excel("Compare_with_P21/Epigenetic Candidates Up and Down in P21_All.xlsx")
+
+tmp =tmp[,c(1,9:22,24)]
+
+tmp =  subset(tmp, !gene %in% c("Mga","Trp53"))
+
+
+tmp.mat = as.matrix(tmp[,c(2:14)])
+rownames(tmp.mat) = tmp$gene
+tmp.mat[tmp.mat==2]=1
+rs = rowSums(tmp.mat)
+
+tmp$nbdiff = rs
+
+tmp = arrange(tmp, Modification,Change,-nbdiff)
+
+tmp = subset(tmp,nbdiff>0)
+
+
+tmp.mat = as.matrix(tmp[,c(2:14)])
+rownames(tmp.mat) = tmp$gene
+
+rs = rowSums(tmp.mat)
+tmp = tmp[rs>0,]
+tmp.mat = tmp.mat[rs>0,]
+
+pos = which(tmp$Change=="Down")
+tmp.mat[pos,] = -1 * tmp.mat[pos,]
+
+
+tmp.anno =  as.data.frame(tmp[,c(15)])
+rownames(tmp.anno) = tmp$gene
+
+tmp.mat[tmp.mat==2]=1
+
+
+toUse  = setdiff(rownames(tmp.mat), c("Exosc3","Exosc9","Exosc8","Zgpat","Sfpq","Zfp57","Tet3","Mbip","Smyd4",
+                                      "Cdk17","Prkab2","Baz1b","Cul3","Ddb1"))
+
+
+tmp = subset(tmp, gene %in% toUse)
+
+#pheatmap(tmp.mat[nrow(tmp.mat):1,], gaps_row = 37,annotation_row = tmp.anno,cluster_cols = F,cluster_rows = F,
+#         color = c("grey90",ggsci::pal_npg()(1)),border_color = "black")
+
+gaps = diff(as.numeric(factor(tmp$Modification)))
+gaps=  which(gaps!=0)
+
+
+cols_ord = c("Astro","Endo","Microglia","NF.Oligo","Oligo",
+             "Inhib_7","Inhib_9",
+             paste0("Exc_",1:13))
+
+anno_colors = list(
+  Modification = c(ggsci::pal_igv()(10),ggsci::pal_jco()(7)[c(2:4,6:7)])
+)
+
+names(anno_colors$Modification) = unique(tmp$Modification)
+
+# Remove some TFs that we are not sure about 
+
+
+
+col_gaps = c(5,7)
+pheatmap(tmp.mat[toUse,paste0("Exc_",1:13)], 
+         annotation_row = tmp.anno,
+         annotation_colors = anno_colors,
+         cluster_cols = F,
+         cluster_rows = F,
+         gaps_row = gaps,
+         #gaps_col = col_gaps,
+         color = c("royalblue", "grey90",ggsci::pal_npg()(1)),
+         border_color = "black")
+```
+
+

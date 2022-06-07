@@ -1,0 +1,75 @@
+---
+title: "Find Markers that are layer specific"
+author: "Mohamed Nadhir Djekidel"
+date: "1/30/2020"
+output: html_document
+---
+
+
+```{r}
+require(Seurat)
+```
+
+```{r}
+exc_layer_mrks = c("Calb1","Cux2","Etv1","Bcl11b", "Pcp4","Foxp2","Syt6")
+load("FinalObjects/PFC_excitatory_saline_sobj.RData")
+```
+
+
+```{r fig.height=5, fig.width=6}
+DimPlot(PFC_excitatory_saline_sobj,reduction = "tsne",group.by = "L2_clusters",label = T,cols = colorRampPalette(brewer.pal(8,"Set1"))(48),label.size = 5)
+```
+
+```{r fig.height=10, fig.width=10}
+FeaturePlot(PFC_excitatory_saline_sobj,features = exc_layer_mrks,reduction = "tsne", cols = c("grey80","#B71B1BFF"),pt.size = 1,max.cutoff='q99')
+```
+
+
+# Get Average expression
+
+
+```{r}
+Ae_expression = DotPlot(PFC_excitatory_saline_sobj,features = exc_layer_mrks,group.by = "L2_clusters")
+
+pct_express = reshape2::dcast(data = Ae_expression$data, formula = features.plot ~ id,value.var = "pct.exp")
+rownames(pct_express) = pct_express$features.plot
+pct_express$features.plot = NULL
+```
+
+
+# For each layer marker get the cluster that they don't e
+
+```{R}
+
+Layers_markers <- list()
+
+for(mrks in rownames(pct_express)){
+  print(mrks)
+  pos_expressed = colnames(pct_express)[which(pct_express[mrks,] > 35)]
+  
+  cls= rep("other",ncol(PFC_excitatory_saline_sobj))
+  cls[PFC_excitatory_saline_sobj@meta.data$L2_clusters %in% pos_expressed] = mrks
+  cls = factor(cls,levels = c(mrks, "other"))
+  Idents(PFC_excitatory_saline_sobj) = cls
+  
+  Layers_markers[[mrks]] = FindMarkers(PFC_excitatory_saline_sobj,ident.1 = mrks)
+}
+
+```
+
+
+# Save data
+
+```{r}
+dir.create("Layer_enrichedGenes",showWarnings = FALSE)
+for(mrks in names(Layers_markers)){
+  
+  df = Layers_markers[[mrks]]
+  colnames(df) = c('p_val',"avg_log2FC", paste0("pct.",mrks),"pct.other", "adjusted_p_val")
+  df$avg_log2FC = log2(exp(df$avg_log2FC))
+  fout= paste0("Layer_enrichedGenes/",mrks,".csv")
+  write.csv(df,fout)
+}
+```
+
+

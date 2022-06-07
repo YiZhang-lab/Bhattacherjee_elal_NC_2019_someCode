@@ -1,0 +1,1165 @@
+---
+title: "Answer reviewers comments"
+author: "Mohamed Nadhir Djekidel"
+date: "5/31/2019"
+output: html_document
+---
+
+# load libraries 
+
+```{r}
+require(Seurat)
+require(ggsci)
+require(pheatmap)
+require(RColorBrewer)
+require(xlsx)
+require(circlize)
+require(ComplexHeatmap)
+```
+
+# Use a different cutoff for the analysis of P21 Vs P60
+
+```{r}
+load("P21/P21_Adult_merged_DEG.RData")
+
+P21_Adult_merged_DEG = lapply(P21_Adult_merged_DEG, function(x) {colnames(x)[1] = "Gene"; x})
+
+```
+
+
+
+```{r}
+P21_Adult_merged_DEG_sig = list()
+
+for(clus in names(P21_Adult_merged_DEG)){
+ print(clus)
+
+ fname = paste0("Compare_with_P21/DEG/All/",clus,".xlsx")
+ P21_Adult_merged_DEG_sig[[clus]] = read.xlsx(fname,sheetIndex = 1,as.data.frame = T)
+ colnames(P21_Adult_merged_DEG_sig[[clus]])[1] = "Gene"
+ P21_Adult_merged_DEG_sig[[clus]]$Cluster = clus
+ P21_Adult_merged_DEG_sig[[clus]]$Percent_diff = (P21_Adult_merged_DEG_sig[[clus]]$pct.1 - P21_Adult_merged_DEG_sig[[clus]]$pct.2)/P21_Adult_merged_DEG_sig[[clus]]$pct.1
+}
+```
+
+
+# Write FC2 data
+
+```{r}
+P21_Adult_merged_DEG_sig_FC2 <- list()
+
+dir.create("C:/Dropbox/PFC/Nature Communications/Second_submission/Data/P21_DEG",showWarnings = F)
+
+for(clus in names(P21_Adult_merged_DEG)){
+  
+  P21_Adult_merged_DEG_sig_FC2[[clus]] = subset(P21_Adult_merged_DEG_sig[[clus]], p_val_adj < 0.05 & abs(avg_logFC) > log(1.5) )
+  
+  
+  #fout = paste0("C:/Dropbox/PFC/Nature Communications/Second_submission/Data/P21_DEG/",clus,'_DEG.xlsx')
+  
+  #write.xlsx(P21_Adult_merged_DEG_sig_FC2[[clus]], fout)
+}
+
+```
+
+
+# Calculate the number of DEG per-cluster
+
+
+```{r}
+exc <- grep("Exc_",names(P21_Adult_merged_DEG_sig_FC2),value = T)
+Inhib <- grep("Inhib_",names(P21_Adult_merged_DEG_sig_FC2),value = T)
+NonNeuro <- c("NF Oligo","Oligo","OPC", "Astro","Endo","Microglia")
+
+
+nbDEG <- matrix(0,nrow = length(P21_Adult_merged_DEG),ncol = 2)
+rownames(nbDEG) <- names(P21_Adult_merged_DEG)
+colnames(nbDEG) <- c("Up","Down")
+
+
+for(cls in names(P21_Adult_merged_DEG)){
+  
+    tmp = P21_Adult_merged_DEG_sig_FC2[[cls]]
+    nbUp = sum(tmp$avg_logFC >0)
+    nbDown = sum(tmp$avg_logFC <0)
+    
+    nbDEG[cls,] <- c(nbUp,-nbDown)
+}
+
+nbDEG=  as.data.frame(nbDEG)
+nbDEG$cluster = rownames(nbDEG)
+nbDEG$cutoff ="0.01"
+nbDEG
+```
+
+
+```{r}
+nbDEG_original <- matrix(0,nrow = length(P21_Adult_merged_DEG),ncol = 2)
+rownames(nbDEG_original) <- names(P21_Adult_merged_DEG)
+colnames(nbDEG_original) <- c("Up","Down")
+
+
+for(cls in names(P21_Adult_merged_DEG)){
+  
+    tmp = P21_Adult_merged_DEG_sig[[cls]]
+    nbUp = sum(tmp$avg_logFC >0)
+    nbDown = sum(tmp$avg_logFC <0)
+    
+    nbDEG_original[cls,] <- c(nbUp,-nbDown)
+}
+
+nbDEG_original = as.data.frame(nbDEG_original)
+nbDEG_original$cluster = rownames(nbDEG_original)
+nbDEG_original$cutoff ="0.05"
+nbDEG_original
+```
+
+
+```{r}
+nbDEG_mlt = reshape2::melt(nbDEG)
+nbDEG_original_mlt = reshape2::melt(nbDEG_original)
+
+df = rbind(nbDEG_mlt, nbDEG_original_mlt)
+
+df$value = abs(df$value)
+df$cluster = factor(df$cluster,levels =  c("Astro","Endo","Microglia","NF Oligo","Oligo", "OPC",
+                                          paste0("Exc_",1:13),
+                                          paste0("Inhib_",1:12)
+                                          )
+                    )
+
+df$type = "Non Neuro"
+df$type[grep("Exc_",df$cluster)] = "Excitatory"
+df$type[grep("Inhib_",df$cluster)] = "Inhibitory"
+
+ggplot(df, aes(x=cluster , y=value+1, fill=cutoff)) + geom_bar(stat = "identity",position = position_dodge(),color="black") +
+    theme_bw() + facet_grid(type~variable) + scale_fill_aaas() + scale_y_log10() + coord_flip()
+
+```
+
+# nbDEG excitatory
+
+```{r fig.height=5, fig.width=3}
+ord = order(rowSums(abs(nbDEG[exc,])),decreasing = T)
+
+H1 = Heatmap(nbDEG[exc[ord],1],cluster_rows = F,
+             col = colorRamp2(seq(0, max(nbDEG[exc,1]),length.out = 10), c("grey80",brewer.pal(9,"YlOrRd"))),
+             show_row_names = F,name="Up")
+H2 = Heatmap(abs(nbDEG[exc[ord],2]),cluster_rows = F,
+             col = colorRamp2(seq(0, max(abs(nbDEG[exc,2])),length.out = 10), c("grey80", brewer.pal(9,"YlGnBu")) ),
+             name="Down"
+             )
+
+pdf("C:/Dropbox/PFC/Nature Communications/Second_submission/RAW/Exc_FC1.5_Pval001_nbDEG.pdf",width = 3,height = 5)
+H1+H2
+dev.off()
+
+H1+H2
+```
+
+
+# nbDEG Inhibitory
+
+```{r fig.height=5, fig.width=3}
+ord = order(rowSums(abs(nbDEG[Inhib,])),decreasing = T)
+
+H1 = Heatmap(nbDEG[Inhib[ord],1],cluster_rows = F,
+             col = colorRamp2(seq(0, max(nbDEG[Inhib,1]),length.out = 10), c("grey80",brewer.pal(9,"YlOrRd"))),
+             show_row_names = F,name="Up")
+H2 = Heatmap(abs(nbDEG[Inhib[ord],2]),cluster_rows = F,
+             col = colorRamp2(seq(0, max(abs(nbDEG[Inhib,2])),length.out = 10), c("grey80", brewer.pal(9,"YlGnBu"))),
+             name="Down"
+             )
+
+pdf("C:/Dropbox/PFC/Nature Communications/Second_submission/RAW/Inhib_FC1.5_Pval001_nbDEG.pdf",width = 3,height = 5)
+H1+H2
+dev.off()
+
+H1+H2
+```
+
+# nbDEG Non-neuronal
+
+```{r fig.height=5, fig.width=3}
+ord = order(rowSums(abs(nbDEG[NonNeuro,1:2])),decreasing = T)
+
+H1 = Heatmap(nbDEG[NonNeuro[ord],1],cluster_rows = F,
+             col = colorRamp2(seq(0, max(nbDEG[NonNeuro,1]),length.out = 9), c(brewer.pal(9,"YlOrRd"))),
+             show_row_names = F,name="Up")
+H2 = Heatmap(abs(nbDEG[NonNeuro[ord],2]),cluster_rows = F,show_row_names = T,
+             col = colorRamp2(seq(0, max(abs(nbDEG[NonNeuro,2])),length.out =9), c(brewer.pal(9,"YlGnBu"))),
+             name="Down"
+             )
+
+pdf("C:/Dropbox/PFC/Nature Communications/Second_submission/RAW/NonNeuro_FC1.5_Pval005_nbDEG.pdf",width = 3,height = 5)
+H1+H2
+dev.off()
+
+
+H1+H2
+```
+
+
+# Read IPA results
+
+
+```{r}
+FC2_IPA_results <- readIPAResults("C:/Dropbox/PFC/Nature Communications/Second_submission/Data/P21_DEG/IPA_results/",
+                                  pathway_pval = 1,
+                                  disease_pval = 1)
+```
+
+## load IPA pathways what were selected in our previous analysis
+
+```{r}
+P21_pathway_enrichment_mat_selected <- read.csv("Compare_with_P21/DEG/IPA_analysis/pathway_enrichment_matrix_SELECTED.csv",stringsAsFactors = F,row.names = 1)
+colnames(P21_pathway_enrichment_mat_selected) <- c(1:13)
+
+```
+
+
+# Plot Pathways heatmap
+
+
+```{r}
+require(reshape2)
+
+FC2_IPA_results_mat <- dcast(FC2_IPA_results$pathway,Pathway ~ cluster,value.var = "logPval",fill = 0)
+
+rownames(FC2_IPA_results_mat) <- FC2_IPA_results_mat$Pathway
+FC2_IPA_results_mat$Pathway = NULL
+
+#FC2_IPA_results_mat = FC2_IPA_results_mat[rownames(FC2_IPA_results_mat) %in% rownames(P21_pathway_enrichment_mat_selected),]
+
+FC2_IPA_results_mat = FC2_IPA_results_mat[rownames(FC2_IPA_results_mat) %in% selected_labels_order_selected,]
+
+# Order them by cluster
+FC2_IPA_results_mat = FC2_IPA_results_mat[,paste0("Exc_",1:13)]
+labels_order <- c()
+
+for(cls in colnames(FC2_IPA_results_mat)){
+  FC2_IPA_results_mat = FC2_IPA_results_mat[order(FC2_IPA_results_mat[,cls],decreasing = T),]
+  
+  pos <- which(FC2_IPA_results_mat[,cls]>0)
+  
+  labels_order <- c(labels_order, rownames(FC2_IPA_results_mat)[pos])
+}
+
+labels_order = unique(labels_order)
+
+FC2_IPA_results_mat = data.matrix(FC2_IPA_results_mat)
+q99 = quantile(FC2_IPA_results_mat,0.99)
+FC2_IPA_results_mat[FC2_IPA_results_mat>q99]=q99
+
+
+pathways_cols = colorRamp2(c(0, seq(-log10(0.05),q99,length.out = 11)), c("grey80", rev(brewer.pal(11,name = "Spectral")) ))
+
+
+pathways_cols = colorRamp2(c(0, -log10(0.05),q99), c("grey80","grey80" , "red"))
+
+col_ord = paste0("Exc_",1:13)
+
+Heatmap(FC2_IPA_results_mat[selected_labels_order_selected,col_ord],
+        cluster_columns = F,
+        cluster_rows = F,
+        col = pathways_cols,
+        heatmap_legend_param = list(title="pvalue", at=c(0,1,-log10(0.05),2,3,4)))
+
+pheatmap(FC2_IPA_results_mat[labels_order,],cluster_cols = F,cluster_rows = F,color = rev(brewer.pal(11,name = "Spectral")))
+```
+
+
+# Plot subsampling 
+
+
+```{r}
+load("FinalObjects/PFC_Adult_P21_cca_final_sobj.RData")
+load("Compare_with_P21/P21_map.result_all.RData")
+P21_map.df = P21_map.result_all$map.df
+
+P21_map.df$pred.cl = as.character(P21_map.df$pred.cl)
+P21_map.df$Final_prediction = P21_map.df$pred.cl
+
+P21_map.df$Final_prediction[P21_map.df$prob < 0.5] = "Unassigned"
+
+
+PFC_Adult_P21_cca_sobj@meta.data$Predicted_ident = "Unassigned"
+
+pos <- which(!is.na(PFC_Adult_P21_cca_sobj@meta.data$L2_clusters))
+PFC_Adult_P21_cca_sobj@meta.data$Predicted_ident[pos] = as.character(PFC_Adult_P21_cca_sobj@meta.data$L2_clusters[pos])
+
+PFC_Adult_P21_cca_sobj@meta.data[rownames(P21_map.df),]$Predicted_ident = as.character(P21_map.df$pred.cl)
+
+pos <- which(PFC_Adult_P21_cca_sobj@meta.data$Predicted_ident != "Unassigned")
+pos = PFC_Adult_P21_cca_sobj@cell.names[pos]
+
+PFC_Adult_P21_cca_sobj = SubsetData(PFC_Adult_P21_cca_sobj,cells.use = pos,subset.raw = T)
+
+# Merge non-neuronal
+PFC_Adult_P21_cca_sobj@meta.data$Predicted_ident_merged = PFC_Adult_P21_cca_sobj@meta.data$Predicted_ident
+PFC_Adult_P21_cca_sobj@meta.data$Predicted_ident_merged[grep("Astro_",PFC_Adult_P21_cca_sobj@meta.data$Predicted_ident_merged)] = "Astro"
+PFC_Adult_P21_cca_sobj@meta.data$Predicted_ident_merged[grep("Endo_",PFC_Adult_P21_cca_sobj@meta.data$Predicted_ident_merged)] = "Endo"
+PFC_Adult_P21_cca_sobj@meta.data$Predicted_ident_merged[grep("Microglia_",PFC_Adult_P21_cca_sobj@meta.data$Predicted_ident_merged)] = "Microglia"
+PFC_Adult_P21_cca_sobj@meta.data$Predicted_ident_merged[grep("NF Oligo_",PFC_Adult_P21_cca_sobj@meta.data$Predicted_ident_merged)] = "NF Oligo"
+PFC_Adult_P21_cca_sobj@meta.data$Predicted_ident_merged[grep("Oligo_",PFC_Adult_P21_cca_sobj@meta.data$Predicted_ident_merged)] = "Oligo"
+PFC_Adult_P21_cca_sobj@meta.data$Predicted_ident_merged[grep("OPC_",PFC_Adult_P21_cca_sobj@meta.data$Predicted_ident_merged)] = "OPC"
+
+PFC_Adult_P21_cca_sobj@meta.data$Predicted_ident_merged[grep("OPC_",PFC_Adult_P21_cca_sobj@meta.data$Predicted_ident_merged)] = "OPC"
+```
+
+
+## load Excitatory 
+
+```{r}
+load("Excitatory/PFC_excitatory_sobj.RData")
+PFC_excitatory_salie_sobj <- SubsetData(PFC_excitatory_sobj,subset.name = "treatment",accept.value = "Saline",subset.raw = T)
+
+load("FinalObjects/PFC_Adult_P21_cca_sobj.RData")
+PFC_Adult_P21_cca_Excitatory_sobj=SubsetData(PFC_Adult_P21_cca_sobj,subset.name = "Orignal_Ident",accept.value = "Excitatory",subset.raw = T)
+
+PFC_Adult_P21_cca_Excitatory_sobj <- removeMitoandRiboGenes_raw(PFC_Adult_P21_cca_Excitatory_sobj)
+PFC_Adult_P21_cca_Excitatory_sobj <- removeMitoandRiboGenes(PFC_Adult_P21_cca_Excitatory_sobj)
+
+```
+
+
+```{r}
+Adult_cca_excitatory_sobj <- SubsetData(PFC_Adult_P21_cca_Excitatory_sobj, subset.name = "DevStage", accept.value = "Adult",subset.raw = T)
+Adult_cca_excitatory_sobj <- SubsetData(Adult_cca_excitatory_sobj,cells.use = PFC_excitatory_salie_sobj@cell.names,subset.raw = T)
+
+Adult_cca_excitatory_sobj <- removeMitoandRiboGenes_raw(Adult_cca_excitatory_sobj)
+Adult_cca_excitatory_sobj <- removeMitoandRiboGenes(Adult_cca_excitatory_sobj)
+
+pos <- match(Adult_cca_excitatory_sobj@cell.names, PFC_excitatory_salie_sobj@cell.names)
+
+Adult_cca_excitatory_sobj@meta.data$Adult.cluster <- PFC_excitatory_salie_sobj@ident[pos]
+
+TSNEPlot(Adult_cca_excitatory_sobj, group.by="Adult.cluster",do.label = T, colors.use = generateColors(28))
+```
+
+```{r}
+P21_cca_excitatory_sobj <- SubsetData(PFC_Adult_P21_cca_Excitatory_sobj, subset.name = "DevStage", accept.value = "P21",subset.raw = T)
+TSNEPlot(PFC_Adult_P21_cca_Excitatory_sobj)
+```
+
+
+# Try boostrapped correlation between samples
+
+```{r}
+require(scrattch.hicat)
+g1= FastWhichCells(PFC_Adult_P21_cca_Excitatory_sobj, group.by= "DevStage", subset.value = "P21", invert = FALSE)
+g2= FastWhichCells(PFC_Adult_P21_cca_Excitatory_sobj, group.by= "DevStage", subset.value = "P21", invert = TRUE)
+
+
+var_genes = DimTopGenes(PFC_Adult_P21_cca_Excitatory_sobj,reduction.type = "cca",dim.use = 1:20,num.genes = 100)
+
+P21.dat = PFC_Adult_P21_cca_Excitatory_sobj@data[,g1]
+
+P60.dat = PFC_Adult_P21_cca_Excitatory_sobj@data[,g2]
+P60.cl = PFC_Adult_P21_cca_Excitatory_sobj@meta.data[g2,]$L2_clusters
+names(P60.cl) = g2
+
+P21_map.result = map_sampling(P60.dat, P60.cl, P21.dat, markers = var_genes)
+
+rm(P21.dat,P60.dat,P60.cl)
+```
+
+# Map the L2 identities
+
+```{r}
+
+
+P21_map.df = P21_map.result$map.df
+
+
+P21_map.df$Final_Assignmet = as.character(P21_map.df$pred.cl)
+
+P21_map.df$Final_Assignmet[P21_map.df$prob < 0.5] = "Unassigned"
+
+
+PFC_Adult_P21_cca_Excitatory_sobj@meta.data[rownames(P21_map.df),]$L2_clusters = P21_map.df$Final_Assignmet
+
+PFC_Adult_P21_cca_Excitatory_sobj@meta.data$Predicted= "Adult"
+
+PFC_Adult_P21_cca_Excitatory_sobj@meta.data[rownames(P21_map.df),]$Predicted = gsub("Exc_","", as.character(P21_map.df$Final_Assignmet))
+
+PFC_Adult_P21_cca_Excitatory_sobj@meta.data$Predicted = factor(PFC_Adult_P21_cca_Excitatory_sobj@meta.data$Predicted,
+                                                                                      levels = c(as.character(1:26),"Unassigned", "Adult"))
+
+TSNEPlot(PFC_Adult_P21_cca_Excitatory_sobj,group.by="Predicted",colors.use = c(generateColors(26),"black", "grey80"),do.label = T,label.size = 5,
+         order = c(as.character(1:26),"Unassigned", "Adult"))
+```
+
+
+# Map the L1 identities
+
+```{r}
+
+PFC_Adult_P21_cca_Excitatory_sobj@meta.data$L1_clusters = "P21"
+
+PFC_Adult_P21_cca_Excitatory_sobj@meta.data[g2,]$L1_clusters = PFC_excitatory_sobj@meta.data[g2,]$L1_cluster
+
+P60.cl.l1 = PFC_Adult_P21_cca_Excitatory_sobj@meta.data[g2,]$L1_clusters
+names(P60.cl.l1) = g2
+
+P21_map.L1.result = map_sampling(P60.dat, P60.cl.l1, P21.dat, markers = var_genes)
+
+P21_map.L1.df = P21_map.L1.result$map.df
+
+P21_map.L1.df$Final_Assignmet = as.character(P21_map.L1.df$pred.cl)
+P21_map.L1.df$Final_Assignmet[P21_map.L1.df$prob < 0.5] = "Unassigned"
+
+
+PFC_Adult_P21_cca_Excitatory_sobj@meta.data[rownames(P21_map.L1.df),]$L1_clusters = P21_map.L1.df$Final_Assignmet
+
+PFC_Adult_P21_cca_Excitatory_sobj@meta.data$Predicted_L1= "Adult"
+
+PFC_Adult_P21_cca_Excitatory_sobj@meta.data[rownames(P21_map.L1.df),]$Predicted_L1 = gsub("Exc_","", as.character(P21_map.L1.df$Final_Assignmet))
+
+PFC_Adult_P21_cca_Excitatory_sobj@meta.data$Predicted_L1 = factor(PFC_Adult_P21_cca_Excitatory_sobj@meta.data$Predicted_L1,
+                                                                                      levels = c(as.character(1:26),"Unassigned", "Adult") )
+
+TSNEPlot(PFC_Adult_P21_cca_Excitatory_sobj,group.by="Predicted_L1",colors.use = c(generateColors(13),"black", "grey80"),do.label = T,label.size = 5,order = c(as.character(1:26),"Unassigned", "Adult"))
+```
+
+
+```{r fig.height=15, fig.width=8}
+Obj1 = SubsetData(PFC_Adult_P21_cca_Excitatory_sobj,subset.name = "DevStage",accept.value = "Adult",subset.raw = T)
+Obj1 = FindVariableGenes(Obj1)
+
+Obj2 = SubsetData(PFC_Adult_P21_cca_Excitatory_sobj,subset.name = "DevStage",accept.value = "P21",subset.raw = T)
+Obj2 = FindVariableGenes(Obj2)
+
+hvg.p60 <- rownames(x = head(x = Obj1@hvg.info, n = 2000))
+hvg.p21 <- rownames(x = head(x = Obj2@hvg.info, n = 2000))
+hvg.union <- union(hvg.p60, hvg.p21)
+
+PFC_Adult_P21_cca_Excitatory_sobj <- RunCCA(Obj1, Obj2,scale.data = TRUE,genes.use = hvg.union)
+DimHeatmap(PFC_Adult_P21_cca_Excitatory_sobj,dim.use = 1:20,reduction.type = "cca",do.balanced = T,cells.use = 500)
+```
+
+
+```{r}
+PFC_Adult_P21_cca_Excitatory_sobj = AlignSubspace(PFC_Adult_P21_cca_Excitatory_sobj,
+                                   reduction.type = "cca",
+                                   grouping.var = "DevStage",
+                                   dims.align = 1:20)
+```
+
+```{r}
+p_PFC = MetageneBicorPlot(PFC_Adult_P21_cca_Excitatory_sobj, grouping.var = "DevStage", 
+                          dims.eval = 1:20, display.progress = TRUE,return.mat = T)
+tmp =p_PFC %>% filter(bicor >= 0.2)
+toUse = as.numeric( names(table(tmp$cc))[table(tmp$cc)==2])
+toUse
+
+
+PFC_Adult_P21_cca_Excitatory_sobj = RunTSNE(PFC_Adult_P21_cca_Excitatory_sobj,reduction.use = "cca.aligned",dims.use = 1:10)
+
+TSNEPlot(PFC_Adult_P21_cca_Excitatory_sobj,group.by="Predicted_L1",
+         colors.use = c(generateColors(13),"black", "grey80"),
+         do.label = T,
+         label.size = 5,
+         order = c(as.character(1:13),"Unassigned", "Adult"))
+```
+
+
+
+```{r}
+TSNEPlot(PFC_Adult_P21_cca_Excitatory_sobj,group.by="Predicted",colors.use = c(generateColors(26),"black", "grey80"),do.label = T,label.size = 5,
+         order = c(as.character(1:26),"Unassigned", "Adult"))
+```
+
+
+# GWAS analysis
+
+Add ADHD to the results and regenerate related figures.
+
+```{r}
+require(readxl)
+PFC_disease_GWAS <- list()
+
+load("FinalObjects/PFC_disease_GWAS_genes.RData")
+
+GWAS_excel = "GWAS/gwas_catalog_v1.0.2-associations_Diseases Split.xlsx"
+for(sheet in excel_sheets(GWAS_excel)[-1]){
+
+  sheet_name <- gsub("\"","",sheet)
+  sheet_name <- gsub("\\s+","_",sheet_name)
+  print(sheet_name)
+  PFC_disease_GWAS[[sheet]] <- as.data.frame(read_excel(GWAS_excel, sheet = sheet))
+}
+```
+
+
+```{r}
+require(biomaRt)
+
+PFC_disease_GWAS_genes <- list()
+
+for(disease in "ADHD") {#names(PFC_disease_GWAS)){
+  tmp_genes <- unique(unlist(strsplit(PFC_disease_GWAS[[disease]]$`REPORTED GENE(S)`,split = ",")))
+  tmp_genes <- gsub("^\\s+","",tmp_genes)
+  tmp_genes <- setdiff(tmp_genes,c("intergenic","NR"))
+  tmp_genes_mouse <- convertHumanGeneList(tmp_genes)
+  PFC_disease_GWAS_genes[[disease]] = tmp_genes_mouse
+}
+```
+
+```{r}
+load("FinalObjects/all_cell_inDD_saline_sobj.RData")
+load("GWAS/PFC_disease_GWAS_genes_score_ae.RData")
+all_cell_inDD_saline_sobj <- SubsetData(all_cell_inDD_sobj,subset.name = "treatment",
+                                         accept.value = "Saline",subset.raw = T)
+
+all_cell_inDD_saline_sobj <- SetIdent(all_cell_inDD_saline_sobj, ident.use = all_cell_inDD_saline_sobj@meta.data$L1_clusters)
+
+
+rs = apply(all_cell_inDD_saline_sobj@data,1,max)
+
+all_cell_inDD_saline_sobj@data = all_cell_inDD_saline_sobj@data[rs>0,]
+
+AE_expression = RobustAverageExpression(all_cell_inDD_saline_sobj)
+all_cells_AE_detection <-  AverageDetectionRate(all_cell_inDD_saline_sobj,thresh.min = 0)
+
+
+
+PFC_disease_GWAS_genes$`Drug Abuse` =NULL
+
+PFC_disease_GWAS_genes_association2 = list()
+
+PFC_disease_GWAS_genes_association2[["e-5"]] = getDiseaseAssociation(PFC_disease_GWAS_genes[1],
+                          all_cell_inDD_saline_sobj,
+                          groups = levels(all_cell_inDD_saline_sobj@ident),
+                          gpval = 1e-5,
+                          lpval = 0.05, 
+                          perpval = 1e-6,
+                          all_mrks = NULL,
+                          AE_expression = AE_expression,
+                          AE_detection = all_cells_AE_detection)
+
+
+
+PFC_disease_GWAS_expressed_classes2 <- list()
+
+for(disease in "ADHD"){
+  print(disease)
+  PFC_disease_GWAS_expressed_classes2[["e-5"]][[disease]]= getExpressedClasses2(PFC_disease_GWAS_genes_association2[["e-5"]][[disease]])
+}
+
+
+```
+
+```{r}
+load("FinalObjects/PFC_disease_GWAS_genes_association.RData")
+load("FinalObjects/PFC_disease_GWAS_expressed_classes.RData")
+
+PFC_disease_GWAS_genes_association[["e-5"]][['ADHD']] = PFC_disease_GWAS_genes_association2[["e-5"]]$ADHD
+
+PFC_disease_GWAS_expressed_classes[["e-5"]][['ADHD']] = PFC_disease_GWAS_expressed_classes2[["e-5"]]$ADHD
+```
+
+
+# Get Stats of the cluster specific genes
+
+```{r}
+Total_stats = matrix(0, nrow=length(PFC_disease_GWAS_expressed_classes[["e-5"]]), 
+                     ncol=length(levels(all_cell_inDD_saline_sobj@ident)))
+
+rownames(Total_stats) = names(PFC_disease_GWAS_expressed_classes[["e-5"]])
+colnames(Total_stats) = levels(all_cell_inDD_saline_sobj@ident)
+
+
+for(disease in names(PFC_disease_GWAS_expressed_classes[["e-5"]])){
+  print(disease)
+  
+  tmp = subset(PFC_disease_GWAS_expressed_classes[["e-5"]][[disease]], category %in% c("cellType-specific","cluster-Specific")  )
+  
+  cs = colSums(PFC_disease_GWAS_genes_association[["e-5"]][[disease]][tmp$gene,])
+  cs =cs/nrow(PFC_disease_GWAS_genes_association[["e-5"]][[disease]][tmp$gene,])
+  cs = cs/max(cs)
+  Total_stats[disease,]=cs
+}
+
+PFC_disease_GWAS_expressed_classes$`e-5`$BEHAVIOR=NULL
+PFC_disease_GWAS_expressed_classes$`e-5`$Parkinson=NULL
+PFC_disease_GWAS_expressed_classes$`e-5`$`AdolescenceChildhood aggressive`=NULL
+PFC_disease_GWAS_expressed_classes$`e-5`$Nicotine=NULL
+PFC_disease_GWAS_expressed_classes$`e-5`$`Tourett Syndrome`=NULL
+PFC_disease_GWAS_expressed_classes$`e-5`$`Cocaine Dependence`=NULL
+
+
+tokeep = setdiff(rownames(Total_stats), c("BEHAVIOR","Parkinson","AdolescenceChildhood aggressive","Nicotine","Tourett Syndrome","Cocaine Dependence"))
+
+Total_stats =Total_stats[tokeep,]
+
+
+rownames(Total_stats) = gsub("Obsessive Compulsive Disorder","OCD",rownames(Total_stats))
+rownames(Total_stats) = gsub("Autism-ADHD_but other too","Autism",rownames(Total_stats))
+rownames(Total_stats) = gsub("Alcohol","Alcoholism",rownames(Total_stats))
+rownames(Total_stats) = gsub("Alzheimer and Dementia","Alzheimer & Dementia",rownames(Total_stats))
+
+
+#Total_stats = apply(Total_stats,1,function(x) x/max(x))
+
+
+require(circlize)
+q99=quantile(Total_stats,0.99)
+col_fun = colorRamp2(seq(0,q99,length.out = 100), colorRampPalette(rev(brewer.pal(n = 11, name ="Spectral")))(100))
+
+
+factors = gsub("_\\d+","",colnames(Total_stats))
+
+factors = c("AA",factors)
+
+mat_list = list()
+
+ph =pheatmap(Total_stats)
+
+for(f in unique(factors)[-1]){
+  pos <- which(factors==f)-1
+  
+  mat_list[[f]] = Total_stats[ph$tree_row$order,pos]
+}
+
+Total_stats = Total_stats[ph$tree_row$order,]
+
+
+gaps = gsub("_\\d+","",colnames(Total_stats))
+  gaps = factor(gaps)
+  gaps = diff(as.numeric(gaps))
+  gaps = which(gaps==1)
+
+
+Total_stats2 = Total_stats
+
+Total_stats2[Total_stats2>q99]=q99
+
+
+pheatmap(t(Total_stats2),cluster_rows = F,gaps_row = gaps,color = colorRampPalette(rev(brewer.pal(n = 11, name ="Spectral")))(100))
+
+# Global Distrbution of GWAS candicates accross diff. cell-types
+circos.par(cell.padding = c(0, 0, 0, 0), gap.degree = 5,"start.degree" = 90)
+circos.initialize(factors, xlim = cbind(rep(0, 9), c(12,table(factors)[-1]) ))
+
+circos.track(factors =  sort(unique(factors)), y = runif(9),bg.border = NA,track.height=0.05,
+    panel.fun = function(x, y) {
+      
+       if(CELL_META$sector.index != "AA"){
+          circos.text(CELL_META$xcenter, CELL_META$cell.ylim[2], 
+            CELL_META$sector.index) 
+       }
+        #circos.axis(labels.cex = 0.6)
+})
+
+
+
+circos.track(ylim = c(0, nrow(Total_stats)), bg.border = NA, track.height =0.4,panel.fun = function(x, y) {
+    #browser()
+    print(CELL_META$sector.index)
+    sector.index = CELL_META$sector.index
+    
+    if(sector.index != "AA"){
+      
+      if(sector.index == "Astro"){
+      circos.yaxis(side = "left",
+                   at =  nrow(Total_stats):1-0.5,
+                   labels = rownames(Total_stats),sector.index = sector.index,labels.cex = 1.2)
+      }
+      m = mat_list[[sector.index]]
+      col_mat = col_fun(m)
+      nr = nrow(m)
+      nc = ncol(m)
+      for(i in 1:nr) {
+          circos.rect(1:nc - 1, rep(nr - i, nc), 
+              1:nc, rep(nr - i + 1, nc), 
+              border = "black", col = col_mat[i, ])
+      }
+    }
+    
+})
+
+for(f in sort(unique(factors))){
+  
+  if(f != "AA"){
+    #browser()
+    pos = which(factors==f)-1
+    lbl = strsplit(colnames(Total_stats)[pos],split = "_")
+    lbl = sapply(lbl, function(x) x[2])
+    lbl = as.numeric(lbl)
+    # circos.axis(sector.index = f, h = "bottom", direction = "inside",
+    #             labels = as.character(lbl),
+    #             major.at = lbl-0.5,
+    #             minor.ticks=0,
+    #   labels.facing = "reverse.clockwise",
+    #   labels.pos.adjust=F)    
+  }
+}
+
+
+```
+
+```{r}
+enrichment_stats <- data.frame()
+
+for(disease in names(PFC_disease_GWAS_expressed_classes[["e-5"]])){
+
+  
+  tbl = table(PFC_disease_GWAS_expressed_classes[["e-5"]][[disease]]$category)
+  
+  tbl = as.data.frame(tbl)
+  tbl$disease=disease
+  
+  tbl$percent = tbl$Freq/sum(tbl$Freq)
+  colnames(tbl) = c("type","Freq","disease","percent")
+  enrichment_stats= rbind(enrichment_stats, tbl)
+}
+
+ggplot(enrichment_stats,aes(x=disease, y=percent, fill=type)) + geom_bar(stat = "identity") + theme_bw() + scale_fill_jco()
+
+```
+
+
+# Comparison between PL and ILA 
+
+
+## Plot Cholfin et al Data
+
+```{r fig.height=8, fig.width=8}
+Cholfin_markers <- c("Lmo4","Nt3","Lmo3","Cad6","RzrB","Ngn2", # Fig1
+                     "Fgf8","Fgf18","Fgf17","Fgf15","Spry1","Spry2",# Fig2, Fig3
+                     "Sp8","Erm","Pea3","Er81","Emx2" #Fig5
+                     )
+
+
+Cholfin_markers = intersect(Cholfin_markers,rownames(PFC_excitatory_sobj@data))
+
+FeaturePlot(PFC_excitatory_sobj,Cholfin_markers, cols.use = c("grey80","red"),pt.size = 0.3)
+```
+
+We use Allen Brain to find the list of genes that show differential staining between the PL and ILA and try to use them 
+to see if they can be used to segregate cells.
+
+
+```{r}
+
+PFC_excitatory_salie_sobj = FindVariableGenes(PFC_excitatory_salie_sobj,x.low.cutoff = 0.25,y.cutoff = 1,x.high.cutoff = 20)
+
+
+vargenes = rownames(subset(PFC_excitatory_salie_sobj@hvg.info, gene.dispersion.scaled >= 0.5 & gene.mean >=0.1))
+
+rs = apply(PFC_excitatory_salie_sobj@data[vargenes,],1,function(x) sum(x>0))
+rs = rs/length(PFC_excitatory_salie_sobj@cell.names)
+
+vargenes = names(rs[rs>0.1])
+
+Avg_expr <- AverageExpression(PFC_excitatory_salie_sobj)
+Avg_expr[Avg_expr<1] = 0
+Avg_expr[Avg_expr>=1] = 1
+
+Avg_pct <- AverageDetectionRate(PFC_excitatory_salie_sobj)
+Avg_pct[Avg_pct<0.4] = 0
+Avg_pct[Avg_pct>=0.4] = 1
+
+
+expressed = rowSums(Avg_expr * Avg_pct)
+expressed = expressed[expressed>0]
+
+
+PL_ILA_layer_cmp <- list()
+PL_ILA_layer_cmp_filtered = list()
+
+for(layer in c(1,2,5,"6a","all")){
+  fname = paste0("Data/PL_Vs_ILA/PL_Vs_ILA_",layer,".csv")
+  PL_ILA_layer_cmp[[layer]] = read.csv(fname)
+  PL_ILA_layer_cmp_filtered[[layer]] = subset(PL_ILA_layer_cmp[[layer]], abs(log2(fold.change)) >4 & 
+                                                gene.symbol %in% vargenes)
+}
+
+sapply(PL_ILA_layer_cmp_filtered, nrow)
+
+```
+
+
+```{r fig.height=10, fig.width=10}
+FeaturePlot(PFC_excitatory_salie_sobj,unique(as.character(PL_ILA_layer_cmp_filtered$`1`$gene.symbol)),cols.use = c("grey80","red"))
+```
+
+
+
+```{r fig.height=10, fig.width=10}
+FeaturePlot(PFC_excitatory_salie_sobj,unique(as.character(PL_ILA_layer_cmp_filtered$`2`$gene.symbol)),cols.use = c("grey80","red"))
+```
+
+
+
+
+# Cluster cells according to some validated markers
+
+```{r fig.height=10, fig.width=10}
+PL_markers <- c("Fam84b","Fezf2","Dkkl1","Ngb")
+
+
+# PFC_excitatory_sobj2 = PFC_excitatory_sobj
+# 
+# PFC_excitatory_sobj2@var.genes = PL_markers
+# 
+# PFC_excitatory_sobj2 = RunPCA(PFC_excitatory_sobj2)
+# 
+# PFC_excitatory_sobj2 = ProjectPCA(PFC_excitatory_sobj2)fChd
+# 
+# 
+# PFC_excitatory_sobj2 = RunTSNE(PFC_excitatory_sobj2,genes.use = PL_markers,check_duplicates=FALSE,dims.use = 1:4,perplexity =50)
+
+PFC_excitatory_sobj = AddModuleScore(PFC_excitatory_sobj,genes.list = list(PL= PL_markers))
+
+PFC_excitatory_sobj@meta.data$Location = ifelse(PFC_excitatory_sobj@meta.data$Cluster1 >0, "PL", "IL")
+
+
+# PFC_excitatory_sobj2 = SetIdent(PFC_excitatory_sobj2,ident.use = PFC_excitatory_sobj2@meta.data$Location)
+# 
+# FeaturePlot(PFC_excitatory_sobj2,PL_markers)
+```
+
+
+```{r}
+TSNEPlot(PFC_excitatory_sobj,do.label = T,group.by="Location")
+```
+
+```{r}
+#PFC_excitatory_sobj@meta.data$Location = ""
+
+#PFC_excitatory_sobj@meta.data[PFC_excitatory_sobj2@cell.names, ]$Location =  as.character(PFC_excitatory_sobj2@meta.data$Location)
+
+
+PL_sobj = SubsetData(PFC_excitatory_sobj,subset.name = "Location",accept.value = "PL",subset.raw = T)
+IL_sobj = SubsetData(PFC_excitatory_sobj,subset.name = "Location",accept.value = "IL",subset.raw = T)
+
+P1 = TSNEPlot(PL_sobj,do.label = F,group.by="Location", do.return=T,colors.use = "#1B9E77") + ggtitle("Prelimbic cells") + 
+  theme(plot.title = element_text(hjust = 0.5))
+P2 = TSNEPlot(IL_sobj,do.label = F,group.by="Location", do.return=T,colors.use = "#7570B3") + ggtitle("Infralimbic cells") +
+  theme(plot.title = element_text(hjust = 0.5))
+gridExtra::grid.arrange(P1,P2,ncol=2)
+```
+
+
+```{r}
+#PL_IL_markers <- FindMarkers(PFC_excitatory_sobj2,ident.1 = "PL")
+IL_PL_by_clus <- list()
+
+for(clus in levels(PFC_excitatory_sobj@meta.data$L1_cluster)){
+  print(paste0("****  ", clus, "  ****")  )
+  clus_sobj <- SubsetData(PFC_excitatory_sobj,subset.name = "L1_cluster",accept.value = clus,subset.raw = T)
+  clus_sobj = SetIdent(clus_sobj,ident.use = clus_sobj@meta.data$Location)
+  IL_PL_by_clus[[clus]] <- FindMarkers(clus_sobj,ident.1 = "PL")
+}
+
+
+IL_PL_by_clus_sig = lapply(IL_PL_by_clus, function(x) {
+                                          x$pct.diff = abs(x$pct.1 - x$pct.2)/pmax(x$pct.1, x$pct.2)
+                                          x = subset(x, p_val_adj < 0.05 & abs(avg_logFC) >log(1.5) & pct.diff>0.3)
+                                          x
+                                          })
+
+
+nbPL_IL_DEG <- data.frame(clusters = names(IL_PL_by_clus_sig),
+                          nbDEG = sapply(IL_PL_by_clus_sig, nrow))
+
+
+ggplot(nbPL_IL_DEG, aes(x=clusters, y=nbDEG)) + geom_bar(stat = "identity",width = 0.6) + theme_bw()
+```
+
+# Do differential gene expression of 
+
+```{r}
+
+for()
+
+```
+
+# Check if there are any differential CHD8 genes
+
+
+```{r}
+
+Chd8_targets <- read.xlsx("C:/Dropbox/PFC/Nature Communications/Second_submission/Data/Phillip_et_al_2018/TableS2-S4.xlsx",
+                          sheetName = "S3")
+
+
+Chd8_targets = Chd8_targets[!duplicated(as.character(Chd8_targets$Gene.Name)),]
+rownames(Chd8_targets) = as.character(Chd8_targets$Gene.Name)
+
+Chd8_DEG_per_celType <- list()
+
+for(clus in names(P21_Adult_merged_DEG)){
+  tmp = subset(P21_Adult_merged_DEG[[clus]], Gene %in% as.character(Chd8_targets$Gene.Name))
+  tmp = subset(tmp, p_val_adj < 0.05)
+  if(nrow(tmp)>0){
+    tmp$log2FC_in_P5 = Chd8_targets[as.character(tmp$Gene),]$log2FoldChange
+    tmp$Direction = ifelse(tmp$avg_logFC >=0, "Up","Down")  
+  }
+  
+  Chd8_DEG_per_celType[[clus]] = tmp
+}
+
+nbChd8_DEG_targets =  sapply(Chd8_DEG_per_celType, function(x) table(x$Direction))
+
+nbChd8_DEG_targets = do.call("rbind",nbChd8_DEG_targets)
+nbChd8_DEG_targets = as.data.frame(nbChd8_DEG_targets)
+
+nbChd8_DEG_targets$Cluster = rownames(nbChd8_DEG_targets)
+
+nbChd8_DEG_targets = reshape2::melt(nbChd8_DEG_targets)
+
+
+ggplot(nbChd8_DEG_targets, aes(x=Cluster, y=value, fill=variable)) + geom_bar(stat = "identity") + theme_bw() + scale_fill_aaas()
+```
+
+
+## Try ChIP-seq data from GSE99331
+
+### Read data and convert it to GREAT format
+
+```{r}
+Chd8_peaks <- read.table("Data/Gompers_et_al/GSE99331_RAW/GSM2644272_Chd8_brain_WT_1_trim-vs.Input.no_model_peaks.narrowPeak.gz",
+                         stringsAsFactors = F)
+
+chd8_peaks_GREAT_format = Chd8_peaks[,1:3]
+chd8_peaks_GREAT_format$peak = paste0("Peak",1:nrow(Chd8_peaks))
+
+write.table(chd8_peaks_GREAT_format,file = "Data/Gompers_et_al/GSE99331_RAW/Chd8_GREAT.bed",sep = "\t",col.names = F,row.names = F,quote = F)
+
+
+Chd8_target_genes <- read.table("Data/Gompers_et_al/GSE99331_RAW/Chd8_target_genes_GREAT_results.txt",
+                                sep="\t",
+                                stringsAsFactors = F)
+
+
+
+# Get the list of genes from Yuta et al, 2017
+
+yuta_peaks <- read.csv("Data/Yuta_et_al/ChipseqData.csv",stringsAsFactors = F)
+colnames(yuta_peaks)[1] = "GeneSymbol"
+yuta_peaks$Adult[yuta_peaks$Adult == "-"] =0
+yuta_peaks$E14.5[yuta_peaks$E14.5 == "-"] =0
+
+
+yuta_peaks$Adult = as.numeric(yuta_peaks$Adult)
+yuta_peaks$E14.5 = as.numeric(yuta_peaks$E14.5)
+
+ovp = subset(yuta_peaks, Adult>0 & E14.5>0)
+E14_specific = subset(yuta_peaks, Adult==0 & E14.5>0)
+Adult_specific = subset(yuta_peaks, Adult>0 & E14.5==0)
+
+chd8_adult_targets <- c(ovp$GeneSymbol, E14_specific$GeneSymbol, Adult_specific$GeneSymbol) #yuta_peaks$GeneSymbol[yuta_peaks$Adult > 0]
+
+
+
+Chd8_DEG_per_celType <- list()
+
+for(clus in names(P21_Adult_merged_DEG)){
+  tmp = subset(P21_Adult_merged_DEG[[clus]], Gene %in% union(as.character(Chd8_target_genes$V1), chd8_adult_targets ))
+  tmp = subset(tmp, p_val_adj < 0.05 & abs(avg_logFC) >= log(1.5))
+  if(nrow(tmp)>0){
+    tmp$Direction = ifelse(tmp$avg_logFC >=0, "Up","Down")  
+     tmp$cluster = clus
+  }
+ 
+  Chd8_DEG_per_celType[[clus]] = tmp
+}
+
+Chd8_DEG_per_celType_df <- do.call("rbind",Chd8_DEG_per_celType)
+
+write.csv(Chd8_DEG_per_celType_df, file="Data/Yuta_et_al/Chd8_DEG_targets.csv")
+
+nbChd8_DEG_targets =  t(sapply(Chd8_DEG_per_celType, function(x) data.frame(Up = sum(x$Direction=="Up"), down= sum(x$Direction == "Down")) ))
+
+#nbChd8_DEG_targets = do.call("rbind",nbChd8_DEG_targets)
+nbChd8_DEG_targets = as.data.frame(nbChd8_DEG_targets)
+nbChd8_DEG_targets$Up = unlist(nbChd8_DEG_targets$Up)
+nbChd8_DEG_targets$down = unlist(nbChd8_DEG_targets$down)
+
+nbChd8_DEG_targets$Cluster = rownames(nbChd8_DEG_targets)
+
+nbChd8_DEG_targets = reshape2::melt(nbChd8_DEG_targets,id.vars = "Cluster")
+
+nbChd8_DEG_targets2 = nbChd8_DEG_targets[grep("Exc",nbChd8_DEG_targets$Cluster),]
+
+nbChd8_DEG_targets2$Cluster  = factor(nbChd8_DEG_targets2$Cluster, levels = paste0("Exc_",1:13))
+
+nbChd8_DEG_targets2 = subset(nbChd8_DEG_targets2, Cluster %in% paste0("Exc_",c(1:4,6:8,10,12:13)))
+
+ggplot(nbChd8_DEG_targets2, aes(x=Cluster, y=value)) + geom_bar(stat = "identity",width=0.8) + theme_bw() + scale_fill_aaas()
+
+```
+
+
+
+# Check the diffential genes in Cartpt+ excitatory neurons
+
+
+```{r}
+require(SC2P)
+Excitatory_DEG26 <- list()
+
+PFC_excitatory_sobj@meta.data$tree.ident <- as.character(PFC_excitatory_sobj@ident)
+
+# Just consider the Cartpt+ cluster
+for(clus in "10" ){
+  Excitatory_DEG26[[clus]] <- list()
+  for(period in unique(PFC_excitatory_sobj@meta.data$Period)){
+    message(paste("cluster",clus,"period",period))
+    Excitatory_DEG26[[clus]][[period]] <- list()
+    
+    
+    tmp_sobj <- SubsetData(PFC_excitatory_sobj,subset.name = "L2_clusters", accept.value = "10",subset.raw = T)
+    tmp_sobj <- SubsetData(tmp_sobj,subset.name = "Period", accept.value = period, subset.raw = T)
+  
+    
+    tmp_sobj = removeMitoandRiboGenes_raw(tmp_sobj)
+    
+    Y = as.matrix(tmp_sobj@raw.data)
+    qt = apply(Y, 2, quantile,0.99)
+    Y = Y[,qt>=10]
+    
+    design = tmp_sobj@meta.data[,c("nUMI","percent.mito","treatment")]
+    design$treatment = factor(design$treatment,levels = c("Saline","Cocaine"))
+    design$class = as.numeric(design$treatment)
+    design = design[colnames(Y),]
+    
+    if(min(table(design$treatment))>3){
+      
+      #tmp_sobj <- SetIdent(tmp_sobj,ident.use = tmp_sobj@meta.data$treatment)
+      #ae = AverageDetectionRate(tmp_sobj)[rownames(Y),]
+      #rm = apply(ae, 1, max)
+      #Y = Y[rm>=0.1,]
+      
+      phenoData <- new("AnnotatedDataFrame", data=design)
+      eset <- ExpressionSet(assayData=Y, phenoData=phenoData)
+      data <- eset2Phase(eset)
+      Excitatory_DEG26[[clus]][[period]] <- twoPhaseDE(data, design=c("treatment"), test.which=1, offset="sf")
+    }
+  }
+}
+
+rm(eset, design, data, Y, tmp_sobj)
+```
+
+```{r}
+require(annotables)
+require(xlsx)
+data(grcm38)
+
+dir.create("C:/Dropbox/PFC/Nature Communications/Second_submission/Data/Cocaine_DEG",showWarnings = F)
+
+DEG_tables_Ex_10 <- list()
+for(period in names(Excitatory_DEG26[[1]])){
+  DEG_tables_Ex_10[[period]] <- data.frame()
+  for(clus in names(Excitatory_DEG26) ){
+      if(is.data.frame(Excitatory_DEG26[[clus]][[period]])){
+        fname = paste0("C:/Dropbox/PFC/Nature Communications/Second_submission/Data/Cocaine_DEG/Excitatory_",clus,"_",period,".xlsx")
+        df  = topGene(Excitatory_DEG26[[clus]][[period]],phase = "both",
+                      number = 30000,p.value = 0.05)
+        df = subset(df, Phase2=="Y")
+        if(nrow(df)>0){
+          pos <- match(df$Gene.name, grcm38$symbol)
+          df$bioType = grcm38$biotype[pos]
+          df$Description = grcm38$description[pos]
+          df$Cluster = clus
+          
+          DEG_tables_Ex_10[[period]] <- rbind(DEG_tables_Ex_10[[period]], df)
+          write.xlsx(df, file=fname)  
+        }
+      }
+    }
+}
+
+```
+
+
+
+
+# Compare VISp with G11
+
+
+```{r}
+require(scran)
+load("Excitatory/PFC_excitatory_sobj.RData")
+load("Compate_with_VC/vc_neurons_sobj.RData")
+
+PFC_excitatory_saline_sobj = SubsetData(PFC_excitatory_sobj, subset.name="treatment",accept.value="Saline",subset.raw=T)
+PFC_excitatory_saline_sobj = NormalizeData(PFC_excitatory_saline_sobj)
+
+ClusGrp11_13_VISp_DEG <- list()
+ClusGrp11_13_VISp_DEG_sig <- list()
+
+for(grp in 1:length(vc_groups)){
+	message(paste("***",grp,"***"))
+	mPFC_clus = vc_groups[[11]]$PFC
+	visp_clus = vc_groups[[grp]]$VISp
+
+	if(length(mPFC_clus)>0 & length(visp_clus)>0){
+
+		pos1 = rownames(subset(PFC_excitatory_saline_sobj@meta.data, L2_clusters %in% mPFC_clus))
+		pos2 = rownames(subset(vc_neurons_sobj@meta.data, cluster %in% visp_clus))
+
+		sobj1 = SubsetData(PFC_excitatory_saline_sobj,cells.use = pos1, subset.raw=T)
+		sobj2 = SubsetData(vc_neurons_sobj,cells.use = pos2, subset.raw=T)
+
+		common_genes = intersect(rownames(sobj1@data), rownames(sobj2@data))
+
+		sce1 = Convert(sobj1, to="sce")
+		sce2 = Convert(sobj2, to="sce")
+
+		sce1 = sce1[common_genes,]
+		sce2 = sce2[common_genes,]
+		out = multiBatchNorm(sce1, sce2)
+		rm(sce1,sce2)
+		sobj_mrg = MergeSeurat(sobj1, sobj2, do.normalize = T,do.scale = T)
+		rm(sobj1,sobj2)
+		sobj_mrg@data = cbind(assay(out[[1]],2),assay(out[[2]],2))
+    sobj_mrg = ScaleData(sobj_mrg)
+		newIdent = c(rep("mPFC",length(pos1)), rep("VISp",length(pos2)))
+		sobj_mrg = SetIdent(sobj_mrg, ident.use = newIdent)
+    
+		ClusGrp11_13_VISp_DEG[[grp]] = FindMarkers(sobj_mrg,test.use = "bimod",ident.1 = "mPFC")
+				
+		de_sig = subset(ClusGrp11_13_VISp_DEG[[grp]], abs(pct.1-pct.2)/max(pct.1,pct.2) > 0.3 & p_val_adj < 1e-5 & abs(avg_logFC) > log(2) )
+		
+		de_sig = de_sig[order(de_sig$avg_logFC,decreasing = T),]
+
+		ClusGrp11_13_VISp_DEG_sig[[grp]] = de_sig			
+	}	
+}	
+
+
+
+
+
+
+
+always_up_Visp <- NULL
+
+for(i in 1:length(ClusGrp11_13_VISp_DEG)){
+  
+  
+  if(!is.null(ClusGrp11_13_VISp_DEG[[i]])){
+    
+    up_genes <- rownames(subset(ClusGrp11_13_VISp_DEG[[i]], p_val_adj < 0.05 & avg_logFC > log(2) & pct.2 < 0.3 ))
+    
+    if(is.null(always_up_Visp)){
+      always_up_Visp = up_genes
+    }else{
+      always_up_Visp = intersect(always_up_Visp,up_genes)
+    }
+    
+  }
+}
+
+cat(t(always_up_Visp))
+```
+
+```
+
+
+

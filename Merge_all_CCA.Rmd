@@ -1,0 +1,2470 @@
+---
+title: "Try to use the CCA method"
+author: "Mohamed Nadhir Djekidel"
+date: "August 10, 2018"
+output: html_document
+---
+
+# Split Data into Saline and Cocain samples
+
+## Load Saline samples
+
+```{r}
+require(Seurat)
+require(stringr)
+options(future.globals.maxSize = 2000 *1024^2)
+source("utils.R")
+Saline_cellRangerPaths <- list(
+  PFCSample2 = "../../PFC_sample2/",
+  PFCSample3 = "../../PFC_sample3/",
+  PFCSample5 = "../../PFC_sample5/",
+  PFCSample7 = "../../PFC_sample7/",
+  PFCSample11 = "../../PFC_sample11/",
+  PFCSample12 = "../../PFC_sample12/"
+  )
+```
+
+### Create Seurate objects 
+
+```{r}
+Saline_sobjPerSample <- list()
+
+for(smp in names(Saline_cellRangerPaths)){
+  message(smp)
+  if(!is.null(Saline_cellRangerPaths[[smp]]) & dir.exists(Saline_cellRangerPaths[[smp]])){
+    Saline_sobjPerSample[[smp]] <- createSeurateObj10x(dataPath = Saline_cellRangerPaths[[smp]], sampleName = smp,
+                                                #initially we don't filer
+                                                mincells = 0,
+                                                minGene = 0
+                                                )
+    Saline_sobjPerSample[[smp]] = RenameCells(Saline_sobjPerSample[[smp]],add.cell.id = smp)
+    Saline_sobjPerSample[[smp]]@meta.data$Sample = smp
+  }
+}
+
+```
+
+### Merge objects
+
+```{r}
+PFCmerged_saline_sobj <- NULL
+
+
+for(i in 1:(length(names(Saline_sobjPerSample))-1)){
+  j=i+1
+  message(paste("Merging with",names(Saline_sobjPerSample)[j]))
+  if(i==1){
+
+    PFCmerged_saline_sobj <- MergeSeurat(object1 = Saline_sobjPerSample[[ i ]],
+                                  object2 = Saline_sobjPerSample[[j ]],
+                                   scale.factor = 1e6,
+                                   do.scale = F,
+                                   do.center = F,
+                                    do.normalize = F)
+  }else{
+
+    normalize <- ifelse(j==length(names(Saline_sobjPerSample)),TRUE,FALSE)
+    PFCmerged_saline_sobj <- MergeSeurat(object1 = PFCmerged_saline_sobj,object2 = Saline_sobjPerSample[[ j ]],
+                                   scale.factor = 1e6,
+                                   do.scale = F,
+                                   do.center = F,
+                                   do.normalize = normalize)
+  }
+  print(table(str_match(rownames(PFCmerged_saline_sobj@meta.data),pattern = "(\\w+)_(\\w+)")[,2]))
+}
+
+PFCmerged_saline_sobj
+
+# Merging with PFCSample3
+# 
+# PFCSample2 PFCSample3 
+#       1462       1171 
+# Merging with PFCSample5
+# 
+# PFCSample2 PFCSample3 PFCSample5 
+#       1462       1171       1705 
+# Merging with PFCSample7
+# 
+# PFCSample2 PFCSample3 PFCSample5 PFCSample7 
+#       1462       1171       1705       1887 
+# Merging with PFCSample11
+# 
+# PFCSample11  PFCSample2  PFCSample3  PFCSample5  PFCSample7 
+#        4747        1462        1171        1705        1887 
+# Merging with PFCSample12
+# Performing log-normalization
+# 0%   10   20   30   40   50   60   70   80   90   100%
+# [----|----|----|----|----|----|----|----|----|----|
+# **************************************************|
+# 
+# PFCSample11 PFCSample12  PFCSample2  PFCSample3  PFCSample5  PFCSample7 
+#        4747        3806        1462        1171        1705        1887 
+# An object of class seurat in project PFCSample2 
+#  26145 genes across 14778 samples.
+```
+
+
+### Normalize data and detect variable genes
+
+```{r}
+PFCmerged_saline_sobj <- SetSamplesLabels_PFC(PFCmerged_saline_sobj)
+PFCmerged_saline_sobj <- removeMitoandRiboGenes_raw(PFCmerged_saline_sobj)
+PFCmerged_saline_sobj <- NormalizeData(PFCmerged_saline_sobj,scale.factor = 1e6,display.progress = T)
+PFCmerged_saline_sobj@meta.data$stage <- paste0(PFCmerged_saline_sobj@meta.data$Period,"_",PFCmerged_saline_sobj@meta.data$treatment)
+
+PFCmerged_saline_sobj <- ScaleData(PFCmerged_saline_sobj,vars.to.regress = c("nUMI","percent.mito"),do.scale = T,do.center = T)
+
+
+
+PFCmerged_saline_sobj <- FindVariableGenes(PFCmerged_saline_sobj,y.cutoff = 2)
+length(PFCmerged_saline_sobj@var.genes) #758 genes
+```
+
+
+## Load Cocaine samples
+
+
+```{r}
+Cocaine_cellRangerPaths <- list(
+  PFCSample1 = "../../PFC_sample1/",
+  PFCSample4 = "../../PFC_sample4/",
+  PFCSample6 = "../../PFC_sample6/",
+  PFCSample8 = "../../PFC_sample8/",
+  PFCSample9 = "../../PFC_sample9/",
+  PFCSample10 = "../../PFC_sample10/"
+  )
+```
+
+## Create Seurate objects 
+
+```{r}
+Cocaine_sobjPerSample <- list()
+
+for(smp in names(Cocaine_cellRangerPaths)){
+  message(smp)
+  if(!is.null(Cocaine_cellRangerPaths[[smp]]) & dir.exists(Cocaine_cellRangerPaths[[smp]])){
+    Cocaine_sobjPerSample[[smp]] <- createSeurateObj10x(dataPath = Cocaine_cellRangerPaths[[smp]], 
+                                                sampleName = smp,mincells = 0,minGene = 0)
+    Cocaine_sobjPerSample[[smp]] = RenameCells(Cocaine_sobjPerSample[[smp]],add.cell.id = smp)
+    Cocaine_sobjPerSample[[smp]]@meta.data$Sample = smp
+  }
+}
+
+```
+
+
+```{r}
+PFCmerged_Cocaine_sobj <- NULL
+
+
+for(i in 1:(length(names(Cocaine_sobjPerSample))-1)){
+  j=i+1
+  message(paste("Merging with",names(Cocaine_sobjPerSample)[j]))
+  if(i==1){
+
+    PFCmerged_Cocaine_sobj <- MergeSeurat(object1 = Cocaine_sobjPerSample[[ i ]],
+                                  object2 = Cocaine_sobjPerSample[[j ]],
+                                   scale.factor = 1e6,
+                                   do.scale = F,
+                                   do.center = F,
+                                    do.normalize = F)
+  }else{
+
+    normalize <- ifelse(j==length(names(Cocaine_sobjPerSample)),TRUE,FALSE)
+    PFCmerged_Cocaine_sobj <- MergeSeurat(object1 = PFCmerged_Cocaine_sobj,object2 = Cocaine_sobjPerSample[[ j ]],
+                                   scale.factor = 1e6,
+                                   do.scale = F,
+                                   do.center = F,
+                                   do.normalize = normalize)
+  }
+  print(table(str_match(rownames(PFCmerged_Cocaine_sobj@meta.data),pattern = "(\\w+)_(\\w+)")[,2]))
+}
+
+# PFCmerged_Cocaine_sobj
+# Merging with PFCSample4
+# 
+# PFCSample1 PFCSample4 
+#       1697       1679 
+# Merging with PFCSample6
+# 
+# PFCSample1 PFCSample4 PFCSample6 
+#       1697       1679       1649 
+# Merging with PFCSample8
+# 
+# PFCSample1 PFCSample4 PFCSample6 PFCSample8 
+#       1697       1679       1649       2010 
+# Merging with PFCSample9
+# 
+# PFCSample1 PFCSample4 PFCSample6 PFCSample8 PFCSample9 
+#       1697       1679       1649       2010       4489 
+# Merging with PFCSample10
+# Performing log-normalization
+# 0%   10   20   30   40   50   60   70   80   90   100%
+# [----|----|----|----|----|----|----|----|----|----|
+# **************************************************|
+# 
+#  PFCSample1 PFCSample10  PFCSample4  PFCSample6  PFCSample8  PFCSample9 
+#        1697        3562        1679        1649        2010        4489 
+
+# An object of class seurat in project PFCSample1 
+#  26145 genes across 15086 samples.
+```
+
+
+```{r}
+PFCmerged_Cocaine_sobj <- SetSamplesLabels_PFC(PFCmerged_Cocaine_sobj)
+PFCmerged_Cocaine_sobj <- removeMitoandRiboGenes_raw(PFCmerged_Cocaine_sobj)
+PFCmerged_Cocaine_sobj <- NormalizeData(PFCmerged_Cocaine_sobj,scale.factor = 1e6,display.progress = T)
+PFCmerged_Cocaine_sobj@meta.data$stage <- paste0(PFCmerged_Cocaine_sobj@meta.data$Period,"_",PFCmerged_Cocaine_sobj@meta.data$treatment)
+PFCmerged_Cocaine_sobj <- ScaleData(PFCmerged_Cocaine_sobj,vars.to.regress = c("nUMI","percent.mito"),do.scale = T,do.center = T)
+PFCmerged_Cocaine_sobj <- FindVariableGenes(PFCmerged_Cocaine_sobj,y.cutoff = 2)
+length(PFCmerged_Cocaine_sobj@var.genes) #759
+```
+
+
+## Do CCA analysis
+
+```{r}
+
+PFC_CCA_cocaine_Saline_sobj <- RunCCA(PFCmerged_saline_sobj, PFCmerged_Cocaine_sobj,
+                                      genes.use = union(PFCmerged_saline_sobj@var.genes, PFCmerged_Cocaine_sobj@var.genes))
+
+tmp = PFC_CCA_cocaine_Saline_sobj@meta.data[,c("Sample","nUMI","nGene")]
+
+tmp$Sample= as.character(tmp$Sample)
+
+tmp$Sample = gsub("PFC","",tmp$Sample)
+
+tmp$Sample= factor(tmp$Sample,levels = paste0("Sample",12:1))
+
+cols = rev(brewer.pal(12,"Paired"))
+
+p1= ggplot(tmp, aes(x=Sample, y= nUMI,fill=Sample)) + geom_boxplot(width=0.5) + scale_fill_manual(values = cols) + theme_bw() + coord_flip()
+
+p2= ggplot(tmp, aes(x=Sample, y= nGene,fill=Sample)) + geom_boxplot(width=0.5) + scale_fill_manual(values = cols) + theme_bw() + coord_flip()
+
+
+gridExtra::grid.arrange(p1,p2,nrow=1)
+```
+
+
+```{r}
+DimHeatmap(PFC_CCA_cocaine_Saline_sobj,dim.use = 1:10,reduction.type = "cca",do.balanced = T)
+```
+
+```{r}
+PFC_CCA_cocaine_Saline_sobj = AlignSubspace(PFC_CCA_cocaine_Saline_sobj,
+                                            reduction.type = "cca",
+                                            grouping.var = "Period",
+                                            dims.align = 1:12)
+```
+
+
+```{r fig}
+p_PFC = MetageneBicorPlot(PFC_CCA_cocaine_Saline_sobj, grouping.var = "Period", 
+                          dims.eval = 1:12, display.progress = TRUE,return.mat = T)
+tmp =p_PFC %>% filter(bicor >= 0.15)
+table(tmp$cc)
+ # 1  2  3  4  5  6  7  8  9 10 11 12 
+ # 3  3  3  3  3  2  3  3  3  3  3  3 
+```
+
+
+```{r}
+PFC_cca_aligned <- PFC_CCA_cocaine_Saline_sobj@dr$cca.aligned@cell.embeddings
+
+save(PFC_cca_aligned,file="PFC_cca_aligned.RData")
+
+
+PFC_cca_aligned_umap = uwot::tumap(PFC_cca_aligned,n_threads = 4,verbose = T,n_neighbors = 10,scale = "scale")
+
+rownames(PFC_cca_aligned_umap) <- rownames(PFC_cca_aligned)
+colnames(PFC_cca_aligned_umap) <- paste0("umap_",1:2)
+
+PFC_CCA_cocaine_Saline_sobj <- SetDimReduction(object = PFC_CCA_cocaine_Saline_sobj, 
+                                               reduction.type = "umap", 
+                                               slot = "cell.embeddings", 
+                                               new.data = PFC_cca_aligned_umap)
+
+PFC_CCA_cocaine_Saline_sobj <- SetDimReduction(object = PFC_CCA_cocaine_Saline_sobj, 
+                                               reduction.type = "umap", 
+                                               slot = "key", 
+                                               new.data = "umap_")
+
+
+DimPlot(PFC_CCA_cocaine_Saline_sobj,reduction.use = "umap",do.label = T)
+```
+
+```{r}
+PFC_CCA_cocaine_Saline_sobj <- RunTSNE(PFC_CCA_cocaine_Saline_sobj, 
+                                       reduction.use = "cca.aligned",dims.use = 1:12)#, dims.use = c(1:12))#4c(1:5,7:8,10))
+TSNEPlot(PFC_CCA_cocaine_Saline_sobj,do.label = T)
+```
+
+
+```{r}
+PFC_CCA_cocaine_Saline_sobj <- FindClusters(PFC_CCA_cocaine_Saline_sobj,
+                                            reduction.type = "cca.aligned",
+                                            dims.use =  1:12,resolution = 1.6)
+
+PFC_CCA_cocaine_Saline_sobj <- BuildClusterTree(PFC_CCA_cocaine_Saline_sobj,reorder.numeric = T,do.reorder = T)
+TSNEPlot(PFC_CCA_cocaine_Saline_sobj, do.label = T,label.size = 6)
+```
+
+## Plot some markers
+
+
+```{r fig.height=8, fig.width=12}
+FeaturePlot(PFC_CCA_cocaine_Saline_sobj,c("Snap25","Slc17a7","Gad2",
+                                          "Flt1", #Endo
+                                          "Aspa", # Oligo
+                                          "Gja1", #Astro
+                                          "Neu4", #NF oligo
+                                          "Pdgfra", #opc
+                                          "C1qa",
+                                          "Cldn5",
+                                          "Cd24a",
+                                          "Pou3f1","Syt6","Tshz2"
+                                          ),cols.use = c("grey80","#B71B1BFF"),pt.size = 0.2)
+```
+
+```{r fig.height=5, fig.width=10}
+
+cols <- generateColors(36)
+names(cols) <- levels(PFC_CCA_cocaine_Saline_sobj@ident)
+
+pdf("Adult_PFC_markers.pdf",width = 25,height = 6)
+plotMarkersHeatmap(
+      PFC_CCA_cocaine_Saline_sobj,
+      markers = c("Snap25","Slc17a7","Gad2","Flt1",
+                  "Aspa","Pdgfra","Neu4","Gja1",
+                  "Top2a","Pou3f1","Syt6","Tshz2",
+                  "C1qa","Cldn5"),
+      clustersColors = cols,
+      #markerClusters = clus_names,
+      #identlevels = clus_lvls,
+      clusterCols = FALSE
+    )
+dev.off()
+
+
+VlnPlot(PFC_CCA_cocaine_Saline_sobj,c("Snap25","Slc17a7","Gad2","C1qa","Cldn5"),nCol = 1,point.size.use = 0)
+```
+
+```{r fig.height=6, fig.width=8}
+
+newPFC_idents <- rep("NONE",length(PFC_CCA_cocaine_Saline_sobj@ident))
+
+newPFC_idents[as.character(PFC_CCA_cocaine_Saline_sobj@ident) %in% c(16,18:20)] <- "Endo"
+newPFC_idents[as.character(PFC_CCA_cocaine_Saline_sobj@ident) %in% c(3)] <- "Oligo"
+newPFC_idents[as.character(PFC_CCA_cocaine_Saline_sobj@ident) %in% c(23)] <- "OPC"
+newPFC_idents[as.character(PFC_CCA_cocaine_Saline_sobj@ident) %in% c(8)] <- "NF Oligo"
+newPFC_idents[as.character(PFC_CCA_cocaine_Saline_sobj@ident) %in% c(14)] <- "Astro"
+newPFC_idents[as.character(PFC_CCA_cocaine_Saline_sobj@ident) %in% c(21)] <- "Inhibitory"
+newPFC_idents[as.character(PFC_CCA_cocaine_Saline_sobj@ident) %in% c(24:32)] <- "Excitatory"
+newPFC_idents[as.character(PFC_CCA_cocaine_Saline_sobj@ident) %in% c(4,13)] <- "Microglia"
+newPFC_idents[as.character(PFC_CCA_cocaine_Saline_sobj@ident) %in% c(1,2,5,6,7,9,10,11,12,15,17,22)] <- "DD" #Double Droplets
+
+
+PFC_CCA_cocaine_Saline_sobj@meta.data$CellType= newPFC_idents
+
+toUse = rownames(subset(PFC_CCA_cocaine_Saline_sobj@meta.data, CellType!="DD"))
+
+PFC_CCA_cocaine_Saline_initial_sobj = PFC_CCA_cocaine_Saline_sobj
+
+PFC_CCA_cocaine_Saline_sobj <- SubsetData(PFC_CCA_cocaine_Saline_initial_sobj, cells.use = toUse, subset.raw = T)
+
+
+
+
+TSNEPlot(PFC_CCA_cocaine_Saline_sobj,do.label = T, group.by="CellType", colors.use = pal_npg()(10),label.size = 5, do.return=TRUE)+
+  ggtitle(paste0("PFC cells (n=",length(PFC_CCA_cocaine_Saline_sobj@cell.names)," cells)")) + 
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+```{r}
+ggplot(PFC_CCA_cocaine_Saline_sobj@meta.data, aes(x=CellType,y=nGene, fill=CellType)) + geom_boxplot() + theme_bw() + scale_fill_manual(values = c("#9F248F", ggsci::pal_simpsons()(10)[c(1,3:6,9:10)])) + geom_hline(yintercept = c(800,1500),color='red')
+```
+
+```{r}
+nerons_touse = rownames(subset(PFC_CCA_cocaine_Saline_sobj@meta.data, CellType %in% c("Excitatory","Inhibitory") & nGene >=1500))
+NonNeuro_touse = rownames(subset(PFC_CCA_cocaine_Saline_sobj@meta.data, !CellType %in% c("Excitatory","Inhibitory") & nGene >=800))
+
+tokeep = PFC_CCA_cocaine_Saline_sobj@cell.names[PFC_CCA_cocaine_Saline_sobj@cell.names %in% c(nerons_touse,NonNeuro_touse)]
+
+PFC_CCA_cocaine_Saline_filtered_sobj  = SubsetData(PFC_CCA_cocaine_Saline_sobj,cells.use = tokeep)
+```
+
+## Get markers
+## Plot some markers
+
+
+```{r fig.height=8, fig.width=12}
+FeaturePlot(all_cell_inDD_sobj,c("Snap25","Slc17a7","Gad2",
+                                 "C1qa",#Micro
+                                 "Flt1", #Endo
+                                 "Aspa", # Oligo
+                                 "Gja1", #Astro
+                                 "Neu4", #NF oligo
+                                 "Pdgfra" #opc
+                                 ),cols.use = c("grey80","#B71B1BFF"),pt.size = 0.2,min.cutoff = "q1")
+```
+
+
+
+```{r}
+TSNEPlot(all_cell_inDD_sobj,do.label = T, group.by="CellType", colors.use = c("#9F248F", pal_simpsons()(10)[c(1,3:5,9:10)]),label.size = 5, do.return=TRUE,pt.size = 0.9)+
+    ggtitle(paste0("PFC cells (n=",length(all_cell_inDD_sobj@cell.names)," cells)")) + 
+    theme(plot.title = element_text(hjust = 0.5))
+```
+
+```{r}
+
+all_mrks <- FindAllMarkers(PFC_CCA_cocaine_Saline_sobj,logfc.threshold = 3,only.pos = T, test.use = "bimod")
+
+CellType_markers =  FindMarkers(PFC_CCA_cocaine_Saline_sobj,ident.1 = "Excitatory", logfc.threshold = 1,
+                  only.pos = T, test.use = "bimod")
+
+tmp2$cluster <- "Excitatory"
+tmp2$gene <- rownames(tmp2)
+
+all_mrks <-  rbind(all_mrks,tmp2)
+
+
+pdf("All_cell_markers.pdf",width = 15,height = 10 )
+PlotMarketGenesHeatmap(PFC_CCA_cocaine_Saline_sobj,
+                       CellType_markers,
+                       pct.1.thr = 0.7,
+                       pct.2.thr = 0.1,
+                       is.pval = T)
+dev.off()
+                               
+```
+
+## Split into excitatory 
+
+```{r}
+PFC_excitatory_sobj <- SubsetData(PFC_CCA_cocaine_Saline_sobj,ident.use = 25:36,subset.raw = T)   
+PFC_excitatory_saline_sobj <- SubsetData(PFC_excitatory_sobj,subset.name = "treatment",accept.value = "Saline")
+PFC_excitatory_cocaine_sobj <- SubsetData(PFC_excitatory_sobj,subset.name = "treatment",accept.value = "Cocaine")
+
+PFC_excitatory_saline_sobj <- FindVariableGenes(PFC_excitatory_saline_sobj,y.cutoff = 2)
+PFC_excitatory_cocaine_sobj <- FindVariableGenes(PFC_excitatory_cocaine_sobj,y.cutoff = 2)
+
+PFC_excitatory_sobj <- RunCCA(PFC_excitatory_saline_sobj, PFC_excitatory_cocaine_sobj)
+
+PFC_excitatory_sobj = AlignSubspace(PFC_excitatory_sobj,
+                                            reduction.type = "cca",
+                                            grouping.var = "Period",
+                                            dims.align = 1:12)
+
+p_exc = MetageneBicorPlot(PFC_excitatory_sobj, grouping.var = "Period", 
+                          dims.eval = 1:12, display.progress = TRUE,return.mat = T)
+tmp =p_exc %>% filter(bicor >= 0.15)
+table(tmp$cc)
+                               
+```
+
+
+# Try umap
+
+```{r}
+PFC_excitatory_cca_alinged = PFC_excitatory_sobj@dr$cca.aligned@cell.embeddings
+
+PFC_excitatory_cca_alinged_umap = uwot::umap(PFC_excitatory_cca_alinged,
+                                             n_neighbors = 100,
+                                             verbose = T,
+                                             n_threads = 4,
+                                             spread = 6,
+                                             init = "lvrandom")
+
+rownames(PFC_excitatory_cca_alinged_umap) <- PFC_excitatory_sobj@cell.names
+colnames(PFC_excitatory_cca_alinged_umap) <- paste0("umap_",1:2)
+
+PFC_excitatory_sobj <- SetDimReduction(object = PFC_excitatory_sobj, 
+                                               reduction.type = "umap", 
+                                               slot = "cell.embeddings", 
+                                               new.data = PFC_excitatory_cca_alinged_umap)
+
+PFC_excitatory_sobj <- SetDimReduction(object = PFC_excitatory_sobj, 
+                                               reduction.type = "umap", 
+                                               slot = "key", 
+                                               new.data = "umap_")
+
+
+DimPlot(PFC_excitatory_sobj,reduction.use = "umap",do.label = T,cols.use = generateColors(30))
+```
+
+
+
+```{r}
+PFC_excitatory_sobj <- RunTSNE(PFC_excitatory_sobj, 
+                                       reduction.use = "cca.aligned", dims.use = c(1:))#c(1:5,7:8,10))
+TSNEPlot(PFC_excitatory_sobj)
+```
+
+
+# Cluster excitatory neurons
+
+```{r}
+PFC_excitatory_sobj <- FindClusters(PFC_excitatory_sobj,reduction.type = "umap",force.recalc = T,dims.use = 1:2)
+PFC_excitatory_sobj <- BuildClusterTree(PFC_excitatory_sobj, do.reorder = T, reorder.numeric = T)
+DimPlot(PFC_excitatory_sobj,reduction.use = "umap",do.label = T,cols.use = generateColors(33))
+```
+
+
+```{r fig.height=4, fig.width=10}
+plotClusterTree(PFC_excitatory_sobj)
+```
+
+# Check if there is ant clusters that are dominated by just one category
+
+```{r}
+table(PFC_excitatory_sobj@ident,PFC_excitatory_sobj@meta.data$Period)
+```
+
+# Removed clusters 3 and 4
+
+```{r}
+#PFC_excitatory_sobj <- SubsetData(PFC_excitatory_sobj,ident.remove = c(3,4),subset.raw = T)
+PFC_excitatory_sobj <- FindClusters(PFC_excitatory_sobj,reduction.type = "cca.aligned",force.recalc = T,resolution = 2)
+PFC_excitatory_sobj <- BuildClusterTree(PFC_excitatory_sobj, do.reorder = T, reorder.numeric = T)
+```
+
+## validate clusters
+
+```{r}
+PFC_excitatory_sobj = RunPCA(PFC_excitatory_sobj)
+
+PFC_excitatory_sobj <- BuildSNN(PFC_excitatory_sobj,reduction.type = "cca.aligned")
+
+connectivity <- Seurat:::CalcConnectivity(object = PFC_excitatory_sobj)
+
+PFC_excitatory_sobj <- ValidateClusters(PFC_excitatory_sobj,top.genes = 100,pc.use = 1:5,min.connectivity = quantile(connectivity,0.9) )
+
+
+PFC_excitatory_sobj <- BuildClusterTree(PFC_excitatory_sobj, do.reorder = T, reorder.numeric = T)
+
+TSNEPlot(PFC_excitatory_sobj, do.label = T, pt.size = 1,colors.use = generateColors(33),label.size = 5)
+
+```
+
+## Find Markers
+
+```{r fig.height=4, fig.width=6}
+TSNEPlot(PFC_excitatory_sobj, do.label = T, pt.size = 1,colors.use = generateColors(33),label.size = 5)
+```
+
+## Get the proportion of samples in each cluster
+
+```{r}
+samples_per_large_clus = table(PFC_excitatory_sobj@meta.data$Sample, PFC_excitatory_sobj@ident)
+
+samples_per_large_clus = as.matrix(samples_per_large_clus)
+
+samples_per_large_clus = apply(samples_per_large_clus,1,function(x) x/sum(x))
+
+samples_per_large_clus <- melt(samples_per_large_clus)
+colnames(samples_per_large_clus) <- c("Sample","Cluster","Freq")
+
+samples_per_large_clus$Sample <- factor(samples_per_large_clus$Sample,
+                                        levels = paste0("PFCSample",c(1:12)))
+
+samples_per_large_clus$Cluster <- factor(samples_per_large_clus$Cluster)
+
+ggplot(samples_per_large_clus, aes(x=Cluster,y=Freq, fill=Sample)) + geom_bar(stat = "identity", width=0.6,color="black") + 
+  theme_bw()+ scale_fill_brewer(palette = "Paired") + ggtitle("Propotion of the samples per cluster") +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+
+```{r fig.height=4, fig.width=6}
+PFC_excitatory_sobj <- SubsetData(PFC_excitatory_sobj,ident.remove = 1)
+PFC_excitatory_sobj <- BuildClusterTree(PFC_excitatory_sobj, do.reorder = T, reorder.numeric = T)
+TSNEPlot(PFC_excitatory_sobj, do.label = T, pt.size = 1,colors.use = generateColors(33),label.size = 5)
+```
+
+
+```{r}
+require(dplyr)
+excitatory_markers <- data.frame()
+
+for(cls in levels(PFC_excitatory_sobj@ident)){
+  tmp_mrks <- FindConservedMarkers(PFC_excitatory_sobj,ident.1 = cls,grouping.var = "Period")
+  tmp_mrks$Cluster = cls
+  tmp_mrks$gene = rownames(tmp_mrks)
+  excitatory_markers <- rbind(excitatory_markers, tmp_mrks)
+}
+
+
+sig_markers <- excitatory_markers %>%
+  group_by(Cluster) %>%
+  #filter(Maintenance_p_val_adj < 1e-2 & Maintenance_avg_logFC > log(2) & (Maintenance_pct.1 > 0.2 & Maintenance_pct.2 < 0.2)) %>%
+   filter(withdraw_48h_p_val_adj < 1e-3 & withdraw_48h_avg_logFC > log(2) & (withdraw_48h_pct.1 > 0.5 & withdraw_48h_pct.2 < 0.2) |  withdraw_48h_pct.2 < 0.01) %>%
+  filter(withdraw_15d_p_val_adj < 1e-3 & withdraw_15d_avg_logFC > log(2) & (withdraw_15d_pct.1 > 0.5 & withdraw_15d_pct.2 < 0.2) | withdraw_15d_pct.2 < 0.1) %>%
+  top_n(30)
+
+
+#pos <- which(!sig_markers$gene %in% rownames(PFC_excitatory_sobj@data))
+#sig_markers$gene[pos] <- gsub("\\d$","",sig_markers$gene[pos])
+#sig_markers$gene <- gsub("Cryab1","Cryab",sig_markers$gene)
+             
+sdp <- SplitDotPlotGG(PFC_excitatory_sobj, genes.plot = unique(sig_markers$gene), 
+                      cols.use = pal_jco()(2) ,
+                      x.lab.rot = T,
+                      plot.legend = T, 
+                      dot.scale = 8, 
+                      do.return = T,
+                      grouping.var = "treatment")
+```
+
+
+
+
+# Plot violin plot of the markers 
+
+```{r}
+pdf("PFC_excitatory_merged_new.pdf",width = 8,height = 30)
+MarkerViolonPlot(PFC_excitatory_sobj,features = unique(sig_markers$gene),
+                         cell.ident = PFC_excitatory_sobj@ident, 
+                 cols.use = generateColors(28),inGrid = T)
+dev.off()
+```
+# plor some selected markers
+
+```{r}
+selected_markers <- c("Calb1", #1,2,3,4
+                      "Ddit4l",#1,2,3,4
+                      "Adam33",#1,3
+                      "Myh7", #3,4
+                      "Penk","Lpl", #3
+                      "Nnat", #5,7,9
+                      "Osr1","Galnt14","Gstm1", #5
+                      "Expi","Cdkn1c","Tspan4", #6
+                      "Rspo2", #7,8
+                      "Nnmt", #7
+                      "Ccdc80","Il1rapl2", #8
+                      "Cbln2",#9,11,
+                      "Trhde",
+                      "Pou3f1","Kcnn2","Oma1",#10
+                      "Thsd7a","Susd5","Rassf3","Plxnd1", #11
+                      "Tshz2","Nxph1","Sla2","Olfm3","Slc17a6",#12
+                      "Foxp2","Syt6","Sla", #13,,
+                      "Egln3"
+                      )
+
+
+
+pdf("Excitatory/Excitatory_selected_Markers_violin.pdf",width = 5,height = 8)
+MarkerViolonPlot(features = selected_markers,
+                 sobj = PFC_excitatory_sobj,
+                 cell.ident = PFC_excitatory_sobj@ident,
+                 cols.use = generateColors(13),
+                 inGrid = T)
+dev.off()
+
+```
+
+
+```{r}
+
+dir.create("RAW/Excitatory_tSNE",showWarnings = F)
+
+for(mrk  in selected_markers){
+  fname = paste0("RAW/Excitatory_tSNE/Exc_layer_marker_",mrk,".pdf")
+  pdf(fname,width = 5,height = 5)
+  FeaturePlot(PFC_excitatory_sobj,c(mrk),cols.use = c("grey80","#B71B1BFF"),max.cutoff = "q99",pt.size = 1,no.axes = T,min.cutoff = "q1")
+  dev.off()
+}
+```
+
+
+
+## Plot layer markers (from Karl Deisseroth lab)
+
+```{r}
+pdf("PFC_excitatory.pdf",width = 8,height = 30)
+MarkerViolonPlot(PFC_excitatory_sobj,features = unique(sig_markers$gene),
+                         cell.ident = PFC_excitatory_sobj@ident, 
+                 cols.use = generateColors(28),inGrid = T)
+dev.off()
+
+```
+
+
+```{r}
+cols =ggsci::pal_d3("category20c")(12)
+names(cols) = levels(PFC_excitatory_sobj@ident)
+
+pdf("Excitatory_Cluster_Markers_heatmap.pdf",width=12,height = 8)
+plotMarkersHeatmap(PFC_excitatory_sobj,
+                       markers = unique(sig_markers$gene),
+                       clustersColors = cols)
+dev.off()
+
+```
+
+```{r}
+
+exc_mrks = c("Pou3f1","Tshz2","Myh7","Foxp2","Adam33","Penk","Nnmt","Thsd7a")
+
+for(mrk  in exc_mrks){
+  fname = paste0("RAW/_Exc_marker_",mrk,".pdf")
+  pdf(fname,width = 5,height = 5)
+  FeaturePlot(PFC_excitatory_sobj,c(mrk),cols.use = c("grey80","#B71B1BFF"),max.cutoff = "q99",pt.size = 1,no.axes = T,min.cutoff = "q1")
+  dev.off()
+}
+```
+
+
+## Do differential gene expression analysis
+
+
+### load the list ARG genes 
+
+```{r}
+require(readxl)
+ARG <- list()
+
+ARG[["Rapid_PRG"]] <- read_excel("ARG_Tyssowski_et_al_2018.xlsx",sheet = 1)
+ARG[["Delay_PRG"]] <- read_excel("ARG_Tyssowski_et_al_2018.xlsx",sheet = 2)
+ARG[["SRG"]] <- read_excel("ARG_Tyssowski_et_al_2018.xlsx",sheet = 3)
+
+
+
+```
+
+# basicl exploratory analysis
+
+```{r}
+PFC_excitatory_Saline_sobj <- SubsetData(PFC_excitatory_sobj,subset.name = "treatment",accept.value = "Saline")
+
+pdf("Excitatory_Cluster_Markers_heatmap.pdf",width=12,height = 8)
+plotMarkersHeatmap(PFC_excitatory_sobj,
+                       markers = unique(sig_markers$gene),
+                       clustersColors = cols)
+dev.off()
+
+```
+
+
+# check the expression of ARG in saline and Cocaine
+
+```{r}
+Expressed_ARG <- list()
+allArg<- c()
+
+for(arg in names(ARG)){
+  colnames(ARG[[arg]]) <- gsub("\\s+","_",colnames(ARG[[arg]]))
+  Expressed_ARG[[arg]] <- subset(ARG[[arg]], Gene_ID %in% rownames(PFC_excitatory_sobj@data))
+  
+  allArg <-unique(c(allArg, Expressed_ARG[[arg]]$Gene_ID))
+}
+
+for(arg in names(Expressed_ARG)){
+  fname  <- paste0("Excitatory/",arg,"_violin.pdf")
+  
+  w =0.4 * nrow(Expressed_ARG[[arg]])
+  pdf(fname,width=15,height = w)
+  MarkerViolonPlot(PFC_excitatory_sobj,features = unique(Expressed_ARG[[arg]]$Gene_ID),
+                 cell.ident = PFC_excitatory_sobj@meta.data$stage,
+                 cols.use = generateColors(28),inGrid = T)
+
+  dev.off()
+}
+
+old_ident = PFC_excitatory_sobj@ident
+
+
+
+
+deg <- FindMarkers(PFC_excitatory_sobj,genes.use = allArg)
+
+```
+
+```{r}
+require(SC2P)
+Excitatory_ARG_DEG <- list()
+
+PFC_excitatory_sobj@meta.data$tree.ident <- as.character(PFC_excitatory_sobj@ident)
+
+for(clus in levels(PFC_excitatory_sobj@ident) ){
+  Excitatory_ARG_DEG[[clus]] <- list()
+  for(period in unique(PFC_excitatory_sobj@meta.data$Period)){
+    message(paste("cluster",clus,"period",period))
+    Excitatory_ARG_DEG[[clus]][[period]] <- list()
+    
+    
+    tmp_sobj <- SubsetData(PFC_excitatory_sobj,ident.use = clus,subset.raw = T)
+    tmp_sobj <- SubsetData(tmp_sobj,subset.name = "Period", accept.value = period, subset.raw = T)
+  
+    
+    tmp_sobj = removeMitoandRiboGenes_raw(tmp_sobj)
+    
+    agrToUse = intersect(allArg, rownames(tmp_sobj@raw.data))
+    Y = as.matrix(tmp_sobj@raw.data)[agrToUse,]
+    qt = apply(Y, 2, quantile,0.99)
+    Y = Y[,qt>=10]
+    
+    # remove any gene that is not expressed after removal of lowly expressing cells
+    rs= rowSums(Y)
+    Y= Y[rs>0,]
+    
+    design = tmp_sobj@meta.data[,c("nUMI","percent.mito","treatment")]
+    design$treatment = factor(design$treatment,levels = c("Saline","Cocaine"))
+    design$class = as.numeric(design$treatment)
+    design = design[colnames(Y),]
+    
+    if(min(table(design$treatment))>3){
+      
+      #tmp_sobj <- SetIdent(tmp_sobj,ident.use = tmp_sobj@meta.data$treatment)
+      #ae = AverageDetectionRate(tmp_sobj)[rownames(Y),]
+      #rm = apply(ae, 1, max)
+      #Y = Y[rm>=0.1,]
+      Excitatory_ARG_DEG[[clus]][[period]] =tryCatch({
+      phenoData <- new("AnnotatedDataFrame", data=design)
+      eset <- ExpressionSet(assayData=Y, phenoData=phenoData)
+      data <- eset2Phase(eset,low.prob = 0.9)
+      twoPhaseDE(data, design=c("treatment"), test.which=1, offset="sf")
+      }, error = function(cond){return(NA)})
+    }
+  }
+}
+
+rm(eset, design, data, Y, tmp_sobj)
+```
+
+
+
+# plot the FC of ARG genes in different clusters
+
+
+````{r}
+
+ARG_FC <- matrix(0,nrow = length(allArg),ncol = 6)
+
+# ensure that the names are in order
+rn = c()
+for(arg in names(Expressed_ARG)){
+  rn <- c(rn,Expressed_ARG[[arg]]$Gene_ID)
+}
+
+rowna
+
+
+
+```
+
+
+### using Negbinome
+```{r}
+Excitatory_DEG <- list()
+
+PFC_excitatory_sobj@meta.data$tree.ident <- as.character(PFC_excitatory_sobj@ident)
+
+for(clus in levels(PFC_excitatory_sobj@ident) ){
+  Excitatory_DEG[[clus]] <- list()
+  for(period in unique(PFC_excitatory_sobj@meta.data$Period)){
+    message(paste("cluster",clus,"period",period))
+    Excitatory_DEG[[clus]][[period]] <- list()
+    
+    
+    tmp_sobj <- SubsetData(PFC_excitatory_sobj,ident.use = clus,subset.raw = T)
+    tmp_sobj <- SubsetData(PFC_excitatory_sobj,subset.name = "Period", accept.value = period, subset.raw = T)
+    
+    
+    
+    smp_saline <- rownames(subset(tmp_sobj@meta.data, treatment == "Saline"))
+    smp_cocaine <- rownames(subset(tmp_sobj@meta.data,treatment == "Cocaine"))
+    
+    
+    if(length(smp_saline)>3 & length(smp_cocaine)>3){
+      tmp_sobj <- SetIdent(tmp_sobj,ident.use = tmp_sobj@meta.data$treatment)
+      Excitatory_DEG[[clus]][[period]] = FindMarkers(tmp_sobj,ident.1 = "Cocaine", test.use = "negbinom",
+                                                     latent.vars = c("nUMI","percent.mito"))
+    }
+  }
+}
+
+```
+
+
+### using MAST
+```{r}
+Excitatory_DEG <- list()
+
+PFC_excitatory_sobj@meta.data$tree.ident <- as.character(PFC_excitatory_sobj@ident)
+
+for(clus in levels(PFC_excitatory_sobj@ident) ){
+  Excitatory_DEG[[clus]] <- list()
+  for(period in unique(PFC_excitatory_sobj@meta.data$Period)){
+    message(paste("cluster",clus,"period",period))
+    Excitatory_DEG[[clus]][[period]] <- list()
+    
+    
+    tmp_sobj <- SubsetData(PFC_excitatory_sobj,ident.use = clus,subset.raw = T)
+    tmp_sobj <- SubsetData(PFC_excitatory_sobj,subset.name = "Period", accept.value = period, subset.raw = T)
+    
+    
+    
+    smp_saline <- rownames(subset(tmp_sobj@meta.data, treatment == "Saline"))
+    smp_cocaine <- rownames(subset(tmp_sobj@meta.data,treatment == "Cocaine"))
+    
+    
+    if(length(smp_saline)>3 & length(smp_cocaine)>3){
+      tmp_sobj <- SetIdent(tmp_sobj,ident.use = tmp_sobj@meta.data$treatment)
+      Excitatory_DEG[[clus]][[period]] = FindMarkers(tmp_sobj,ident.1 = "Cocaine", test.use = "MAST",
+                                                     latent.vars = c("nUMI","percent.mito"))
+    }
+  }
+}
+
+save(Excitatory_DEG, file="Excitatory_MAST_DEG.RData")
+
+```
+
+
+
+### using SC2P
+```{r}
+require(SC2P)
+Excitatory_DEG <- list()
+
+PFC_excitatory_sobj@meta.data$tree.ident <- as.character(PFC_excitatory_sobj@ident)
+
+for(clus in levels(PFC_excitatory_sobj@ident) ){
+  Excitatory_DEG[[clus]] <- list()
+  for(period in unique(PFC_excitatory_sobj@meta.data$Period)){
+    message(paste("cluster",clus,"period",period))
+    Excitatory_DEG[[clus]][[period]] <- list()
+    
+    
+    tmp_sobj <- SubsetData(PFC_excitatory_sobj,ident.use = clus,subset.raw = T)
+    tmp_sobj <- SubsetData(tmp_sobj,subset.name = "Period", accept.value = period, subset.raw = T)
+  
+    
+    tmp_sobj = removeMitoandRiboGenes_raw(tmp_sobj)
+    
+    Y = as.matrix(tmp_sobj@raw.data)
+    qt = apply(Y, 2, quantile,0.99)
+    Y = Y[,qt>=10]
+    
+    design = tmp_sobj@meta.data[,c("nUMI","percent.mito","treatment")]
+    design$treatment = factor(design$treatment,levels = c("Saline","Cocaine"))
+    design$class = as.numeric(design$treatment)
+    design = design[colnames(Y),]
+    
+    if(min(table(design$treatment))>3){
+      
+      #tmp_sobj <- SetIdent(tmp_sobj,ident.use = tmp_sobj@meta.data$treatment)
+      #ae = AverageDetectionRate(tmp_sobj)[rownames(Y),]
+      #rm = apply(ae, 1, max)
+      #Y = Y[rm>=0.1,]
+      
+      phenoData <- new("AnnotatedDataFrame", data=design)
+      eset <- ExpressionSet(assayData=Y, phenoData=phenoData)
+      data <- eset2Phase(eset)
+      Excitatory_DEG[[clus]][[period]] <- twoPhaseDE(data, design=c("treatment"), test.which=1, offset="sf")
+    }
+  }
+}
+
+rm(eset, design, data, Y, tmp_sobj)
+```
+
+
+# Get common DEG genes
+
+```{r}
+
+common_DEG_phase <- list()
+
+
+for(period in names(Excitatory_DEG[[1]])){
+  print(period)  
+  common_DEG_phase[[period]] <- list()
+  
+  for(clus in names(Excitatory_DEG)){
+    
+    if(is.data.frame(Excitatory_DEG[[clus]][[period]])){
+    df  = topGene(Excitatory_DEG[[clus]][[period]],phase = "both",
+                    number = 30000,p.value = 0.05)
+    
+    tmp <- subset(df, Phase2 == "Y")
+    if(class(common_DEG_phase[[period]]) == 'list'){
+      common_DEG_phase[[period]] = tmp$Gene.name
+    }else{
+      common_DEG_phase[[period]] <- intersect(common_DEG_phase[[period]],tmp$Gene.name)
+    }
+    }
+  }
+}
+
+nr = max(sapply(common_DEG_phase, length))
+
+common_DEG_phase.df <- matrix("",nrow = nr,ncol = length(common_DEG_phase))
+colnames(common_DEG_phase.df) <- names(common_DEG_phase)
+
+for(period in names(common_DEG_phase)){
+  if(length(common_DEG_phase[[period]])>0){
+    common_DEG_phase.df[,period] <- common_DEG_phase[[period]]
+  }
+}
+
+write.csv(common_DEG_phase.df, file="Excitatory_common_DEG.csv",row.names = F)
+
+```
+
+
+# Get common DEG for the same cluster between 
+
+
+```{r}
+
+my_cmps = list(c("Maintenance","withdraw_48h"), c("withdraw_48h","withdraw_15d"))
+
+common_diff_genes  = data.frame()
+
+for(clus in names(Excitatory_DEG)){
+    for(i in 1:length(my_cmps)){
+    
+      cmp = paste(my_cmps[[i]],collapse = "_")
+      print(paste("*** Cluster :",clus,"CMP:",cmp))  
+      gns_up = list()
+      gns_down = list()
+      gns = list()
+      for(period in my_cmps[[i]]){
+        
+        gns[[period]] = list()
+        gns_up[[period]]=list()
+        gns_down[[period]] = list()
+        
+        if(!is.data.frame(Excitatory_DEG[[clus]][[period]])){
+          next
+        }
+        
+        df  = topGene(Excitatory_DEG[[clus]][[period]],phase = "both",
+                    number = 30000,p.value = 0.05)
+        
+        gns[[period]] = subset(df, Phase2 == "Y")
+        
+        df$Ph2.coef = as.numeric(df$Ph2.coef)
+        gns_up[[period]] = subset(df, Ph2.coef >0 & Phase2 == "Y")
+        gns_down[[period]] = subset(df, Ph2.coef <0 & Phase2 == "Y")
+      }
+      
+      ovp_up = intersect(gns_up[[1]]$Gene.name, gns_up[[2]]$Gene.name)
+      ovp_down = intersect(gns_down[[1]]$Gene.name, gns_down[[2]]$Gene.name)
+      ovp = intersect(gns[[1]]$Gene.name, gns[[2]]$Gene.name)
+      
+      
+      
+      tmp_df = data.frame(cluster=clus,
+                      Stage1 = my_cmps[[i]][1], 
+                      Stage2 = my_cmps[[i]][2],
+                      common_DEG = paste(ovp,collapse = ","),
+                      common_UP_DEG = paste(ovp_up,collapse = ","),
+                      common_DOWN_DEG = paste(ovp_down,collapse = ",")
+                      )
+      
+      common_diff_genes = rbind(common_diff_genes, tmp_df)
+    }
+}
+
+write.csv(common_diff_genes, file="Excitatory/common_diff_between_stages.csv")
+```
+
+
+# Write results 
+
+```{r}
+require(xlsx)
+require(annotables)
+data(grcm38)
+dir.create("Excitatory",showWarnings = F)
+dir.create("Excitatory/Excitatory_DEG_Cocaine_005/",showWarnings = F)
+
+
+DEG_tables <- list()
+for(period in names(Excitatory_DEG[[1]])){
+  DEG_tables[[period]] <- data.frame()
+  for(clus in names(Excitatory_DEG) ){
+      if(is.data.frame(Excitatory_DEG[[clus]][[period]])){
+        fname = paste0("Excitatory/Excitatory_DEG_Cocaine_005/Excitatory_",clus,"_",period,".xlsx")
+        df  = topGene(Excitatory_DEG[[clus]][[period]],phase = "both",
+                      number = 30000,p.value = 0.05)
+        df = subset(df, Phase2=="Y")
+        if(nrow(df)>0){
+          pos <- match(df$Gene.name, grcm38$symbol)
+          df$bioType = grcm38$biotype[pos]
+          df$Description = grcm38$description[pos]
+          df$Cluster = clus
+          
+          DEG_tables[[period]] <- rbind(DEG_tables[[period]], df)
+          #write.xlsx(df, file=fname)  
+        }
+      }
+    }
+}
+
+for(period in names(DEG_tables)){
+  fname = paste0("Excitatory/Excitatory_DEG_Cocaine_005/Excitatory_",period,".csv")
+  write.csv(DEG_tables[[period]], fname)
+}
+
+```
+
+
+
+```{r}
+require(SC2P)
+Excitatory_nbDEG_perCluster <- data.frame()
+
+for(period in names(Excitatory_DEG[[1]])){
+  for(clus in names(Excitatory_DEG)){
+    
+    if(is.data.frame(Excitatory_DEG[[clus]][[period]])){
+      df1  = topGene(Excitatory_DEG[[clus]][[period]],phase = "both",
+          number = 30000,p.value = 0.05)
+      tmp1 <- subset(df1, Phase2 == "Y")
+      
+      df = data.frame(cluster=clus, period = period, nbDEG=nrow(tmp1))
+      
+      Excitatory_nbDEG_perCluster <- rbind(Excitatory_nbDEG_perCluster,df)  
+    }
+  }
+}
+
+Excitatory_nbDEG_perCluster$cluster <- factor(Excitatory_nbDEG_perCluster$cluster, levels = 13:1)
+
+Excitatory_nbDEG_perCluster <- subset(Excitatory_nbDEG_perCluster, nbDEG > 0)
+
+
+ggplot(Excitatory_nbDEG_perCluster, aes(x=period, y=cluster)) + geom_point(aes(size=nbDEG),color="#524FA1") + theme_bw() +
+scale_color_viridis_c(option = "B") + theme(axis.text = element_text(colour = "black",size = 12),axis.text.x = element_text(angle = 45,hjust = 1)) + xlab("Phase") + scale_size(breaks = seq(10,to = 130,by = 30),range = c(1,8))
+
+```
+
+```{r}
+
+common_DEG_phase_clus <- list()
+
+common_DEG_phase_df <- list()
+
+for(period in names(Excitatory_DEG[[1]])){
+  print(period)  
+  common_DEG_phase_clus[[period]] <- matrix(0,length(names(Excitatory_DEG)),length(names(Excitatory_DEG)))
+  colnames(common_DEG_phase_clus[[period]]) <- names(Excitatory_DEG)
+  rownames(common_DEG_phase_clus[[period]]) <- names(Excitatory_DEG)
+  
+  
+  common_DEG_phase_df[[period]] <- data.frame()
+  
+  for(clus1 in names(Excitatory_DEG)){
+    for(clus2 in names(Excitatory_DEG)){
+      cmp = paste0(clus1,"_vs_",clus2)
+      
+      print(cmp)
+      if(is.data.frame(Excitatory_DEG[[clus1]][[period]]) && is.data.frame(Excitatory_DEG[[clus2]][[period]])){
+
+        df1  = topGene(Excitatory_DEG[[clus1]][[period]],phase = "both",
+          number = 30000,p.value = 0.05)
+
+        df2  = topGene(Excitatory_DEG[[clus2]][[period]],phase = "both",
+          number = 30000,p.value = 0.05)
+
+        tmp1 <- subset(df1, Phase2 == "Y")
+        tmp2 <- subset(df2, Phase2 == "Y")
+
+        ncom = intersect(tmp1$Gene.name, tmp2$Gene.name)
+        
+      
+        df = data.frame(Comparison =cmp, genes = paste(ncom,collapse = ",") )
+        
+        common_DEG_phase_df[[period]] <- rbind(common_DEG_phase_df[[period]],df)
+        
+        common_DEG_phase_clus[[period]][clus1, clus2] = length(ncom)/length(c(tmp1$Gene.name, tmp2$Gene.name))
+
+        }
+
+      }
+    }
+  }
+
+  
+ ph_color = colorRampPalette(rev(brewer.pal(n = 11, name ="Spectral")))(100)
+
+  for(period in names(common_DEG_phase_clus)){
+    diag(common_DEG_phase_clus[[period]]) <- 0
+    common_DEG_phase_clus[[period]][is.nan(common_DEG_phase_clus[[period]])] =0
+    
+    fname = paste0("Excitatory/",period,"_nbDEG_heatmap_05.pdf")
+    pdf(fname,width = 6,height =6)
+    pheatmap::pheatmap(common_DEG_phase_clus[[period]], display_numbers = T,number_color = "black",border_color = "black",
+                       clustering_method = "ward.D2",color = ph_color)
+    dev.off()
+  }
+
+  dir.create("Excitatory/nbCommon_DEG",showWarnings = F)
+  for(period in names(common_DEG_phase_df)){
+    
+    fname = paste0("Excitatory/nbCommon_DEG/",period,"_nbCommonDEG.csv")
+    write.csv(common_DEG_phase_df[[period]], file=fname,row.names = F)
+  }
+
+
+```
+
+
+# Number of differential genes per-layer
+
+```{r fig.height=5, fig.width=3}
+layers_clusters <- list()
+
+
+layers_clusters[["eL2/3-1"]] <- 1:4
+layers_clusters[["eL2/3-2"]] <- 6
+layers_clusters[["eL5-1"]] <- 10
+layers_clusters[["eL5-2"]] <- 12
+layers_clusters[["eL5-3"]] <- c(8,11,7)
+layers_clusters[["eL6-1"]] <- 13
+layers_clusters[["eL6-2"]] <- c(5,9)
+
+nbDEG_bylayer = data.frame()
+
+for(lyr in names(layers_clusters)){
+  #clusters = paste0("Exc_", layers_clusters[[lyr]])
+  
+  tmp = subset(Excitatory_nbDEG_perCluster, cluster %in% layers_clusters[[lyr]])
+  
+  tmp_sum = tmp %>% group_by(period) %>% summarise(nbDEG_sum = sum(nbDEG))
+  tmp_sum$layer = lyr
+  nbDEG_bylayer = rbind(nbDEG_bylayer, tmp_sum)
+}
+
+ggplot(nbDEG_bylayer, aes(x=period, y=layer)) + geom_point(aes(size=nbDEG_sum),color="#524FA1") + theme_bw() +
+scale_color_viridis_c(option = "B") + theme(axis.text = element_text(colour = "black",size = 12),axis.text.x = element_text(angle = 45,hjust = 1)) + xlab("Phase") + scale_size(breaks = seq(10,to = 130,by = 30),range = c(1,8))
+```
+
+
+# Number of differential ARG
+
+```{r}
+
+DEG_ARG_by_clus <- list()
+
+for(period in names(Excitatory_DEG[[1]])){
+  
+  DEG_ARG_by_clus[[period]] = data.frame()
+  
+  for(clus in names(Excitatory_DEG)){
+    
+      for(arg_lst  in names(ARG)){ # this loop is not optimized 
+        DEG_ARG_by_clus[[period]][[clus]][[arg_lst]] = c()
+        
+        if(is.data.frame(Excitatory_DEG[[clus]][[period]])){
+        df1  = topGene(Excitatory_DEG[[clus]][[period]],phase = "both",
+          number = 30000,p.value = 0.05)
+        
+        tmp1 <- subset(df1, Phase2 == "Y")
+        
+        ovp = intersect(tmp1$Gene.name, ARG[[arg_lst]]$Gene_ID)
+        ovp = paste(ovp,collapse = ",")
+        df = data.frame(cluster=clus, ARG_Class= arg_lst, DEG_ARG=ovp )
+        
+        DEG_ARG_by_clus[[period]] = rbind(DEG_ARG_by_clus[[period]],df)
+      }
+    }
+  }
+}
+
+
+for(period in names(DEG_ARG_by_clus)){
+  fname = paste0("Excitatory/ARG_",period,".csv")
+  write.csv(DEG_ARG_by_clus[[period]],fname)
+}
+
+
+```
+
+
+
+# Overlap between cocaine and P21 DEG genes 
+
+```{r}
+
+common_P21_Cocaine_DEG <- list()
+P21_specific_DEG <- list()
+Cocaine_specific_DEG <- list()
+
+#names(Excitatory_DEG) <- paste0("Exc_",names(Excitatory_DEG))
+
+for(cls in paste0("Exc_",1:13)){
+ 
+  
+  df1  = topGene(Excitatory_DEG[[cls]]$withdraw_15d,phase = "both",
+          number = 30000,p.value = 0.05)
+  tmp1 <- subset(df1, Phase2 == "Y")
+  
+  tmp2 = subset(P21_Adult_merged_DEG[[cls]], p_val_adj < 0.05 & abs(avg_logFC) > log(1.5) & (pct.1 < 0.9 | pct.2 < 0.9))
+  
+  common_P21_Cocaine_DEG[[cls]] = subset(tmp1, Gene.name %in%  rownames(tmp2))
+  P21_specific_DEG[[cls]] = subset(tmp2, !rownames(tmp2) %in% tmp1$Gene.name)
+  Cocaine_specific_DEG[[cls]] = subset(tmp1, !Gene.name %in%  rownames(tmp2))
+  
+  all_gns = unique(c(df1$Gene.name, rownames(tmp2)))
+  
+  mat = matrix(0,nrow = length(all_gns),ncol=2)
+  rownames(mat) = all_gns
+  colnames(mat) = c("P21","Cocaine")
+  
+  mat[common_P21_Cocaine_DEG[[cls]]$Gene.name,]=1
+  mat[rownames(P21_specific_DEG[[cls]]),"P21"]=1
+  mat[Cocaine_specific_DEG[[cls]]$Gene.name,"Cocaine"]=1
+}
+
+```
+
+
+
+
+
+## Get more clusters
+
+```{r fig.height=3, fig.width=8}
+PFC_excitatory_sobj@meta.data$L1_cluster= PFC_excitatory_sobj@ident
+
+PFC_excitatory_saline_sobj = SubsetData(PFC_excitatory_sobj,subset.name = "treatment",accept.value = "Saline")
+
+PFC_excitatory_saline_sobj= ScaleData(PFC_excitatory_saline_sobj,vars.to.regress = c("nUMI","percent.mito","Period"))
+
+PFC_excitatory_saline_sobj = FindVariableGenes(PFC_excitatory_saline_sobj)
+
+PFC_excitatory_saline_sobj= RunPCA(PFC_excitatory_saline_sobj,pcs.compute = 20)
+
+PFC_excitatory_sobj <- FindClusters(PFC_excitatory_sobj,dims.use = 1:10,resolution = 3)
+
+PFC_excitatory_sobj <- BuildClusterTree(PFC_excitatory_sobj,do.reorder = T,reorder.numeric = T)
+
+p1= TSNEPlot(PFC_excitatory_sobj,pt.size = 0.4,colors.use = generateColors(30),do.label = T,label.size = 5,do.return=T)
+p2= TSNEPlot(PFC_excitatory_sobj,pt.size = 0.4,colors.use = generateColors(30),do.label = T,label.size = 5,do.return=T, group.by="L1_cluster")
+
+gridExtra::grid.arrange(p2,p1,ncol=2)
+```
+
+
+```{r}
+require(dplyr)
+PFC_excitatory_subClus_markers <- data.frame()
+
+for(cls in levels(PFC_excitatory_sobj@ident)){
+  print(cls)
+  tmp_mrks <- FindConservedMarkers(PFC_excitatory_sobj,ident.1 = cls,grouping.var = "Period")
+  tmp_mrks$Cluster = cls
+  tmp_mrks$gene = rownames(tmp_mrks)
+  PFC_excitatory_subClus_markers <- rbind(PFC_excitatory_subClus_markers, tmp_mrks)
+}
+
+
+sig_SubClus_markers <- PFC_excitatory_subClus_markers %>%
+  group_by(Cluster) %>%
+  #filter(Maintenance_p_val_adj < 1e-2 & Maintenance_avg_logFC > log(2) & (Maintenance_pct.1 > 0.2 & Maintenance_pct.2 < 0.2)) %>%
+   filter(withdraw_48h_p_val_adj < 1e-3 & withdraw_48h_avg_logFC > log(2) & (withdraw_48h_pct.1 > 0.5 & withdraw_48h_pct.2 < 0.2) |  withdraw_48h_pct.2 < 0.01) %>%
+  filter(withdraw_15d_p_val_adj < 1e-3 & withdraw_15d_avg_logFC > log(2) & (withdraw_15d_pct.1 > 0.5 & withdraw_15d_pct.2 < 0.2) | withdraw_15d_pct.2 < 0.1) %>%
+  top_n(30)
+
+
+
+
+PFC_excitatory_subClus_markers <- FindAllMarkers(PFC_excitatory_sobj,
+                                                 test.use = "negbinom",
+                                                 latent.vars = )
+```
+
+```{r}
+mrks_26clus = FindAllMarkers(PFC_excitatory_saline_sobj,logfc.threshold = log(2),test.use = "negbinom",latent.vars = c("nUMI","Period"))
+```
+
+
+# Plot heatmap
+
+```{r}
+pdf("Excitatory/Excitatory_26Clust_heatmap.pdf",width=12,height = 18)
+PlotMarketGenesHeatmap(PFC_excitatory_sobj,
+                       mrks_26clus,
+                       power.thr = 0,
+                       pct.1.thr = 0.50,
+                       is.pval = T,
+                       cols = generateColors(30))
+dev.off()
+```
+
+
+# Plot violin
+
+```{r}
+
+mrks_26clus_sig  <- subset(mrks_26clus, p_val_adj < 1e-3 & avg_logFC > log(1.5) & pct.1 > 0.5 & pct.2 < 0.3)
+
+pdf("Excitatory/Excitatory_26Clust_violin.pdf",width = 12,height = 50)
+MarkerViolonPlot(PFC_excitatory_sobj,features = unique(mrks_26clus_sig$gene),
+                         cell.ident = PFC_excitatory_sobj@ident, 
+                 cols.use = generateColors(26),inGrid = T)
+dev.off()
+
+```
+
+# Selected markers
+
+```{r}
+mrks_26clus_selected = c("Myh7","Lpl","Penk","Adam33","Pcdh11x","Fam40b",
+                         "Zfhx4","Gm13629",
+                         "Tmem215","Slc4a4", #1
+                         "Igfn1","Ptgs1","Efcab6", #2
+                         "Necab2",#3
+                         "D430036J16Rik","Capn3","Wscd1", #4
+                         "Plk5",#5
+                         "Zbtb44",#6,7
+                         "Acot2",#6
+                         "Il18",#7
+                         "Slc22a4",#8
+                         "Gm12300",#9
+                         "Npnt","Exph5", #10
+                         "Ctxn3",#11
+                         "Oprk1","Cdh9", #12,13
+                         "Sema3c",
+                         "Epor","Ccdc3", #13
+                         "Ucma","Cd24a", #14
+                         "Susd5","Hsd11b1",#15
+                         "Lat2","1190003J15Rik", #16,17
+                         "Tspan4",#16
+                         "Foxp2","Syt6", #18,19,20
+                         "Lsp1",#19,20
+                         "Gm1337",#18
+                         "Lmo1",#19
+                         "Olfm3",#21,22
+                         "Tshz2","Slc17a6", "Sla2", #21
+                         "Scube1",#22,23,24,25
+                         "Egln3","Ptprm", #22
+                         "Thsd7a","G0s2", #23
+                         "Lgals1", #24
+                         "Il1rapl2",#25
+                         "Pou3f1","Cacna1h"#26
+                         )
+
+
+clus26_colors= c("#0F5DFF","#FF7F0E","#2CA02C","#D62728","#9467BD","#EFA275","#E377C2","#7F7F7F","#BCBD22","#17BECF",
+			           "#FED439","#709AE1","#8A9197","#D2AF81","#00CC86","#D5E4A2","#197EC0","#CC32B7","#46732E","#71D0F5",
+			           "#FF6F00","#EDB42D","#FC4349","#8A4198","#5A9599","#D4BF9B")
+
+pdf("Excitatory/Excitatory_26Clus_selected_Markers_violin_new.pdf",width = 9,height = 9*2.765251)
+MarkerViolonPlot(features = mrks_26clus_selected,
+                 sobj = PFC_excitatory_sobj,
+                 cell.ident = PFC_excitatory_sobj@ident,
+                 cols.use = clus26_colors,
+                 inGrid = T)
+dev.off()
+
+```
+
+## Inhibitory
+
+```{r}
+PFC_inhibitory_sobj <- SubsetData(PFC_CCA_cocaine_Saline_sobj,ident.use = c(9,23),subset.raw = T)   
+PFC_inhibitory_saline_sobj <- SubsetData(PFC_inhibitory_sobj,subset.name = "treatment",accept.value = "Saline")
+PFC_inhibitory_cocaine_sobj <- SubsetData(PFC_inhibitory_sobj,subset.name = "treatment",accept.value = "Cocaine")
+
+PFC_inhibitory_saline_sobj <- FindVariableGenes(PFC_inhibitory_saline_sobj,y.cutoff = 2)
+PFC_inhibitory_cocaine_sobj <- FindVariableGenes(PFC_inhibitory_cocaine_sobj,y.cutoff = 2)
+
+PFC_inhibitory_sobj <- RunCCA(PFC_inhibitory_saline_sobj, PFC_inhibitory_cocaine_sobj)
+
+PFC_inhibitory_sobj = AlignSubspace(PFC_inhibitory_sobj,
+                                            reduction.type = "cca",
+                                            grouping.var = "Period",
+                                            dims.align = 1:12)
+
+p_exc = MetageneBicorPlot(PFC_inhibitory_sobj, grouping.var = "Period", 
+                          dims.eval = 1:12, display.progress = TRUE,return.mat = T)
+tmp =p_exc %>% filter(bicor >= 0.15)
+table(tmp$cc)
+                               
+```
+
+
+
+# Try umap
+
+```{r}
+PFC_inhibitory_cca_alinged = PFC_inhibitory_sobj@dr$cca.aligned@cell.embeddings[,1:9]
+
+PFC_inhibitory_cca_alinged_umap = uwot::umap(PFC_inhibitory_cca_alinged,
+                                             n_neighbors = 30,
+                                             verbose = T,
+                                             n_threads = 4,
+                                             spread = 6,
+                                             init = "lvrandom")
+
+rownames(PFC_inhibitory_cca_alinged_umap) <- PFC_inhibitory_sobj@cell.names
+colnames(PFC_inhibitory_cca_alinged_umap) <- paste0("umap_",1:2)
+
+PFC_inhibitory_sobj <- SetDimReduction(object = PFC_inhibitory_sobj, 
+                                               reduction.type = "umap", 
+                                               slot = "cell.embeddings", 
+                                               new.data = PFC_inhibitory_cca_alinged_umap)
+
+PFC_inhibitory_sobj <- SetDimReduction(object = PFC_inhibitory_sobj, 
+                                               reduction.type = "umap", 
+                                               slot = "key", 
+                                               new.data = "umap_")
+
+
+DimPlot(PFC_inhibitory_sobj,reduction.use = "umap",do.label = T,cols.use = generateColors(30))
+```
+
+
+
+```{r}
+PFC_inhibitory_sobj <- RunTSNE(PFC_inhibitory_sobj, reduction.use = "cca.aligned", 
+                               dims.use = c(1:9),
+                               perplexity = 20)
+TSNEPlot(PFC_inhibitory_sobj)
+```
+
+# Cluster inhibitory neurons
+
+```{r}
+PFC_inhibitory_sobj <- FindClusters(PFC_inhibitory_sobj,reduction.type = "umap",force.recalc = T,dims.use = 1:2,
+                                    resolution = 3)
+PFC_inhibitory_sobj <- BuildClusterTree(PFC_inhibitory_sobj, do.reorder = T, reorder.numeric = T)
+DimPlot(PFC_inhibitory_sobj,reduction.use = "tsne",do.label = T,cols.use = generateColors(33),label.size = 5)
+```
+
+```{r fig.height=6, fig.width=8}
+
+inhib_mrks = c("Reln","Meis2","Vip","Sst","Pvalb","Fam107a","Npy2r","Crh","Plcxd3","S100a13","Per3", "Tnnt1")
+
+for(mrk  in inhib_mrks){
+  fname = paste0("RAW/_Inhib_marker_",mrk,".pdf")
+  pdf(fname,width = 3,height = 3)
+  FeaturePlot(PFC_inhibitory_sobj,c(mrk),cols.use = c("grey80","#B71B1BFF"),max.cutoff = "q99",pt.size = 1,no.axes = T)
+  dev.off()
+}
+
+FeaturePlot(PFC_inhibitory_sobj,c("Vip","Tac2","Pvalb","Sst","Meis2"), reduction.use = "tsne",cols.use = c("grey80","red"))
+```
+
+## validate clusters
+
+```{r fig.height=4, fig.width=6}
+PFC_inhibitory_sobj = RunPCA(PFC_inhibitory_sobj)
+
+PFC_inhibitory_sobj <- BuildSNN(PFC_inhibitory_sobj,reduction.type = "umap")
+
+connectivity <- Seurat:::CalcConnectivity(object = PFC_inhibitory_sobj)
+
+PFC_inhibitory_sobj <- ValidateClusters(PFC_inhibitory_sobj,top.genes = 100,pc.use = 1:5,min.connectivity = quantile(connectivity,0.9) )
+
+
+PFC_inhibitory_sobj <- BuildClusterTree(PFC_inhibitory_sobj, do.reorder = T, reorder.numeric = T)
+
+TSNEPlot(PFC_inhibitory_sobj, do.label = T, pt.size = 1,colors.use = generateColors(33),label.size = 5)
+
+```
+
+
+
+
+```{r}
+require(dplyr)
+inhibitory_markers <- data.frame()
+
+# for(cls in levels(PFC_inhibitory_sobj@ident)){
+#   
+#   
+#   tmp_mrks <- FindConservedMarkers(PFC_inhibitory_sobj,ident.1 = cls,grouping.var = "Period")
+#   tmp_mrks$Cluster = cls
+#   tmp_mrks$gene = rownames(tmp_mrks)
+#   inhibitory_markers <- rbind(inhibitory_markers, tmp_mrks)
+# }
+# 
+# 
+# inhibitory_sig_markers <- inhibitory_markers %>%
+#   group_by(Cluster) %>%
+#   filter(Maintenance_p_val_adj < 1e-3 & Maintenance_avg_logFC > log(2) & (Maintenance_pct.1 > 0.5 & Maintenance_pct.2 < 0.2)) %>%
+#   # filter(withdraw_48h_p_val_adj < 1e-3 & withdraw_48h_avg_logFC > log(2) & (withdraw_48h_pct.1 > 0.5 & withdraw_48h_pct.2 < 0.4) |  withdraw_48h_pct.2 < 0.01) %>%
+#   # filter(withdraw_15d_p_val_adj < 1e-3 & withdraw_15d_avg_logFC > log(2) & (withdraw_15d_pct.1 > 0.5 & withdraw_15d_pct.2 < 0.4) | withdraw_15d_pct.2 < 0.1) %>%
+#   
+#   
+#   top_n(30)
+
+
+inhibitory_markers_all <- FindAllMarkers(PFC_inhibitory_sobj,only.pos = T)
+
+
+#pos <- which(!inhibitory_sig_markers$gene %in% rownames(PFC_inhibitory_sobj@data))
+#inhibitory_sig_markers$gene[pos] <- gsub("\\d$","",inhibitory_sig_markers$gene[pos])
+#inhibitory_sig_markers$gene <- gsub("Cryab1","Cryab",inhibitory_sig_markers$gene)
+#              
+# SplitDotPlotGG(PFC_inhibitory_sobj, genes.plot = unique(inhibitory_sig_markers$gene), 
+#                       cols.use = pal_jco()(2) ,
+#                       x.lab.rot = T,
+#                       plot.legend = T, 
+#                       dot.scale = 8, 
+#                       do.return = T,
+#                       grouping.var = "treatment")
+```
+
+```{r}
+cols =ggsci::pal_d3("category20c")(12)
+names(cols) = levels(PFC_inhibitory_sobj@ident)
+
+pdf("Inhibitory_Cluster_Markers_heatmap.pdf",width=12,height = 8)
+PlotMarketGenesHeatmap(PFC_inhibitory_sobj,
+                       sobj_mrks = inhibitory_markers_all, 
+                       is.pval = TRUE, pct.1.thr = 0.7,pct.2.thr = 0.2, 
+                       nbGenes = 10,
+                       cols   = cols)
+dev.off()
+
+```
+
+
+
+```{r}
+inhib_sig_markers <- subset(inhibitory_markers_all, pct.1 > 0.4 & pct.2 < 0.2)
+
+
+pdf("Inhibitory/PFC_inhibitory_violin_all.pdf",width = 8,height = 50)
+MarkerViolonPlot(PFC_inhibitory_sobj,features = unique(inhib_sig_markers$gene),
+                         cell.ident = PFC_inhibitory_sobj@ident, 
+                 cols.use = generateColors(28),inGrid = T)
+dev.off()
+```
+
+```{r}
+inhib_selected_markers <- c("Sst","Crhbp","Slc5a5",#1,2
+                            "Stim2","Cul4a",
+                            "B3gat2","Cartpt","Kcnmb4", "Gfra2","Tln2", #2
+                            "Reln",
+                            "Pbx3",
+                            "Meis2","Rasl11b", #3
+                            #"Penk",
+                            "Vip","Htr3a", #4,9,
+                            "Pthlh","Id3",#4
+                            "Crim1",#5
+                            "Pvalb","Plcxd3","Tcap", #6
+                            "Thrsp","Sema5a","Tnnt1",#7,8
+                            "S100a13","Per3",#8
+                            #"Tac2", #9,10,11,12
+                            "Grpr","Crh", #9
+                            "Sncg",#10,11,12
+                            "Cpne2",#10,11
+                            "Npy2r","Nnmt","Gm12027", #10
+                            "Dhx32","Wnt5a","Slc35f4", #11,12
+                            "5330429C05Rik","Fam107a", #11
+                            #"Slc17a8",
+                            "Slc35e2","Cacna1i"
+                      )
+
+
+
+inhib_selected_markers <- c("Sst","Pvalb","Vip","Htr3a")
+
+
+pdf("RAW/Inhibitory_selected_Markers_violin.pdf",width = 5,height = 7)
+MarkerViolonPlot(features = inhib_selected_markers,
+                 sobj = PFC_inhibitory_sobj,
+                 cell.ident = PFC_inhibitory_sobj@ident,
+                 cols.use = generateColors(12),
+                 inGrid = T)
+dev.off()
+
+```
+
+### using SC2P
+```{r}
+require(SC2P)
+inhibitory_DEG <- list()
+
+PFC_inhibitory_sobj@meta.data$tree.ident <- as.character(PFC_inhibitory_sobj@ident)
+
+for(clus in levels(PFC_inhibitory_sobj@ident) ){
+  inhibitory_DEG[[clus]] <- list()
+  for(period in unique(PFC_inhibitory_sobj@meta.data$Period)){
+    message(paste("cluster",clus,"period",period))
+    inhibitory_DEG[[clus]][[period]] <- list()
+    
+    
+    tmp_sobj <- SubsetData(PFC_inhibitory_sobj,ident.use = clus,subset.raw = T)
+    tmp_sobj <- SubsetData(tmp_sobj,subset.name = "Period", accept.value = period, subset.raw = T)
+    
+    
+    tmp_sobj = removeMitoandRiboGenes_raw(tmp_sobj)
+    
+    Y = as.matrix(tmp_sobj@raw.data)
+    
+    if(ncol(Y)<6){
+      next
+    }
+    
+    qt = apply(Y, 2, quantile,0.99)
+    Y = Y[,qt>quantile(qt,0.25)]
+    rs = apply(Y, 1, function(x) sum(x>0))
+    Y = Y[rs>=floor(ncol(Y)*0.1),]
+    
+    design = tmp_sobj@meta.data[,c("nUMI","percent.mito","treatment")]
+    design$treatment = factor(design$treatment,levels = c("Saline","Cocaine"))
+    design$class = as.numeric(design$treatment)
+    design = design[colnames(Y),]
+    
+    if(min(table(design$treatment))>3){
+      
+      #tmp_sobj <- SetIdent(tmp_sobj,ident.use = tmp_sobj@meta.data$treatment)
+      #ae = AverageDetectionRate(tmp_sobj)[rownames(Y),]
+      #rm = apply(ae, 1, max)
+      #Y = Y[rm>=0.1,]
+      
+      phenoData <- new("AnnotatedDataFrame", data=design)
+      eset <- ExpressionSet(assayData=Y, phenoData=phenoData)
+      data <- eset2Phase(eset)
+      inhibitory_DEG[[clus]][[period]] <- twoPhaseDE(data, design=c("treatment"), test.which=1, offset="sf")
+    }
+  }
+}
+
+
+rm(eset, design, data, Y, tmp_sobj)
+```
+
+
+```{r}
+
+common_inihib_DEG_phase <- list()
+
+
+for(period in names(inhibitory_DEG[[1]])){
+  print(period)  
+  common_inihib_DEG_phase[[period]] <- list()
+  
+  for(clus in names(inhibitory_DEG)){
+    
+    if(is.data.frame(inhibitory_DEG[[clus]][[period]])){
+    df  = topGene(inhibitory_DEG[[clus]][[period]],phase = "both",
+                    number = 30000,p.value = 0.05)
+    
+    tmp <- subset(df, Phase2 == "Y")
+    if(class(common_inihib_DEG_phase[[period]]) == 'list'){
+      common_inihib_DEG_phase[[period]] = tmp$Gene.name
+    }else{
+      common_inihib_DEG_phase[[period]] <- intersect(common_inihib_DEG_phase[[period]],tmp$Gene.name)
+    }
+    }
+  }
+}
+
+nr = max(sapply(common_inihib_DEG_phase, length))
+
+common_inihib_DEG_phase.df <- matrix("",nrow = nr,ncol = length(common_inihib_DEG_phase))
+colnames(common_inihib_DEG_phase.df) <- names(common_inihib_DEG_phase)
+
+for(period in names(common_inihib_DEG_phase)){
+  if(length(common_inihib_DEG_phase[[period]])>0){
+    common_inihib_DEG_phase.df[,period] <- common_inihib_DEG_phase[[period]]
+  }
+}
+
+write.csv(common_inihib_DEG_phase.df, file="Inhibitory_common_DEG.csv",row.names = F)
+
+```
+
+
+
+```{r}
+
+require(SC2P)
+NonNeuro_DEG <- list()
+
+nonNeuo_cellsTypes  = setdiff(unique(all_cell_inDD_sobj@meta.data$CellType),c("Excitatory","Inhibitory"))
+
+for(cellType in c(nonNeuo_cellsTypes)){
+
+  NonNeuro_DEG[[cellType]] = list()
+  for(period in unique(all_cell_inDD_sobj@meta.data$Period)[1:3]){
+
+    message(paste(cellType,"period",period))
+    NonNeuro_DEG[[cellType]][[period]] <- list()
+    
+    cells.toUse <- rownames(subset(all_cell_inDD_sobj@meta.data, CellType == cellType & Period == period ))
+
+    tmp_sobj <- SubsetData(all_cell_inDD_sobj,cells.use = cells.toUse,subset.raw = T)
+    
+    
+    tmp_sobj = removeMitoandRiboGenes_raw(tmp_sobj)
+    
+    Y = as.matrix(tmp_sobj@raw.data)
+    # remove extreme values
+    #outlayer = quantile(Y,0.99)
+    nbCells = apply(Y,1,function(x) sum(x>0))
+    Y = Y[nbCells>=3,]
+    #qt = apply(Y, 2, quantile,0.90)
+    #Y = Y[,qt>0]
+    
+    # Remove problematic cells
+    Cell0 = colMeans(Y == 0)
+    par1 = apply(Y, 2, function(yy) {
+                          yy = yy[yy <= 15]
+                          SC2P:::RobustPoi0(yy)
+                          })
+       
+    pi0.hat = Cell0/(par1[1, ] + (1 - par1[1, ]) * dpois(0, par1[2,]))
+    
+    tokeep = which(pi0.hat<=1)  
+    Y = Y[,tokeep]
+    
+    qt = apply(Y, 2, quantile,0.99)
+    Y = Y[,qt>1]
+    
+    design = tmp_sobj@meta.data[,c("nUMI","percent.mito","treatment")]
+    design$treatment = factor(design$treatment,levels = c("Saline","Cocaine"))
+    design$class = as.numeric(design$treatment)
+    design = design[colnames(Y),]
+    
+    if(min(table(design$treatment))>3){
+      
+      #tmp_sobj <- SetIdent(tmp_sobj,ident.use = tmp_sobj@meta.data$treatment)
+      #ae = AverageDetectionRate(tmp_sobj)[rownames(Y),]
+      #rm = apply(ae, 1, max)
+      #Y = Y[rm>=0.1,]
+      
+      
+      
+      phenoData <- new("AnnotatedDataFrame", data=design)
+      eset <- ExpressionSet(assayData=Y, phenoData=phenoData)
+      data <- eset2Phase(eset)
+      NonNeuro_DEG[[cellType]][[period]] <- twoPhaseDE(data, design=c("treatment"), test.which=1, offset="sf")
+    }
+  }
+}
+rm(eset, design, data, Y, tmp_sobj)
+```
+
+
+## Save the results
+
+```{r}
+dir.create("nonNeurons/DEG_005",showWarnings = FALSE)
+for(cellType in names(NonNeuro_DEG)){
+  for(period in names(NonNeuro_DEG[[cellType]])){
+    
+    if(is.data.frame(NonNeuro_DEG[[cellType]][[period]])){
+      df1  = topGene(NonNeuro_DEG[[cellType]][[period]],phase = "both",
+          number = 30000,p.value = 0.05)
+      tmp1 <- subset(df1, Phase2 == "Y")
+      fname = paste0("nonNeurons/DEG_005/",cellType, "_",period, "_DEG.csv")
+      write.csv(NonNeuro_DEG[[cellType]][[period]],fname)
+    }
+  }
+}
+```
+
+## Count the number of differential non-neurons
+
+```{r}
+nonNeuro_nbDEG_perCluster <- data.frame()
+
+for(period in names(NonNeuro_DEG[[1]])){
+  for(clus in names(NonNeuro_DEG)){
+    
+    if(is.data.frame(NonNeuro_DEG[[clus]][[period]])){
+      df1  = topGene(NonNeuro_DEG[[clus]][[period]],phase = "both",
+          number = 30000,p.value = 0.05)
+      tmp1 <- subset(df1, Phase2 == "Y")
+      
+      df = data.frame(cluster=clus, period = period, nbDEG=nrow(tmp1))
+      
+      nonNeuro_nbDEG_perCluster <- rbind(nonNeuro_nbDEG_perCluster,df)  
+    }
+  }
+}
+
+
+#nonNeuro_nbDEG_perCluster$cluster <- paste0("Exc_", nonNeuro_nbDEG_perCluster$cluster)
+#nonNeuro_nbDEG_perCluster$cluster <- factor(nonNeuro_nbDEG_perCluster$cluster, levels = paste0("Exc_",1:13))
+nonNeuro_nbDEG_perCluster <- subset(nonNeuro_nbDEG_perCluster, nbDEG > 0)
+
+```
+
+
+
+# Get the number of DEG in neuronal cells
+
+
+```{r}
+require(SC2P)
+Excitatory_nbDEG_perCluster <- data.frame()
+
+for(period in names(Excitatory_DEG[[1]])){
+  for(clus in names(Excitatory_DEG)){
+    
+    if(is.data.frame(Excitatory_DEG[[clus]][[period]])){
+      df1  = topGene(Excitatory_DEG[[clus]][[period]],phase = "both",
+          number = 30000,p.value = 0.05)
+      tmp1 <- subset(df1, Phase2 == "Y")
+      
+      df = data.frame(cluster=clus, period = period, nbDEG=nrow(tmp1))
+      
+      Excitatory_nbDEG_perCluster <- rbind(Excitatory_nbDEG_perCluster,df)  
+    }
+  }
+}
+
+Excitatory_nbDEG_perCluster$cluster <- paste0("Exc_", Excitatory_nbDEG_perCluster$cluster)
+Excitatory_nbDEG_perCluster$cluster <- factor(Excitatory_nbDEG_perCluster$cluster, levels = paste0("Exc_",1:13))
+Excitatory_nbDEG_perCluster <- subset(Excitatory_nbDEG_perCluster, nbDEG > 0)
+
+
+Inhibitory_nbDEG_perCluster <- data.frame()
+
+for(period in names(inhibitory_DEG[[1]])){
+  for(clus in names(inhibitory_DEG)){
+    
+    if(is.data.frame(inhibitory_DEG[[clus]][[period]])){
+      df1  = topGene(inhibitory_DEG[[clus]][[period]],phase = "both",
+          number = 30000,p.value = 0.05)
+      tmp1 <- subset(df1, Phase2 == "Y")
+      
+      df = data.frame(cluster=clus, period = period, nbDEG=nrow(tmp1))
+      
+      Inhibitory_nbDEG_perCluster <- rbind(Inhibitory_nbDEG_perCluster,df)  
+    }
+  }
+}
+
+
+Inhibitory_nbDEG_perCluster$cluster <- paste0("Inhib_", Inhibitory_nbDEG_perCluster$cluster)
+Inhibitory_nbDEG_perCluster$cluster <- factor(Inhibitory_nbDEG_perCluster$cluster, levels = paste0("Inhib_",1:12))
+Inhibitory_nbDEG_perCluster <- subset(Inhibitory_nbDEG_perCluster, nbDEG > 0)
+
+
+nbDEG_neuronal = rbind(Excitatory_nbDEG_perCluster,Inhibitory_nbDEG_perCluster)
+
+nbDEG_all <- rbind(nonNeuro_nbDEG_perCluster,Inhibitory_nbDEG_perCluster) #nbDEG_neuronal)
+
+nbDEG_all$cluster  = factor(nbDEG_all$cluster , 
+                            levels =  c(rev(levels(nonNeuro_nbDEG_perCluster$cluster)),paste0("Exc_",1:13), paste0("Inhib_",1:12)))
+
+nbDEG_all$period = factor(nbDEG_all$period,levels = c("Maintenance","withdraw_48h","withdraw_15d"))
+
+ggplot(nbDEG_all, aes(x=period, y=cluster)) + geom_point(aes(size=nbDEG),color="#524FA1") + 
+  theme_bw() +
+  scale_color_viridis_c(option = "B") + 
+  theme(axis.text = element_text(colour = "black",size = 12),axis.text.x = element_text(angle = 45,hjust = 1)) + 
+  xlab("Phase") + 
+  scale_size(breaks = seq(10,to = 130,by = 30),range = c(1,8))
+```
+
+```{r}
+ggplot(nbDEG_neuronal, aes(x=period, y=cluster, color=nbDEG)) + geom_point(aes(size=nbDEG)) + theme_bw() +
+  scale_color_viridis_c() + theme(axis.text = element_text(colour = "black",size = 12)) + xlab("Phase")
+```
+
+
+
+
+# Write results 
+
+```{r}
+require(annotables)
+data("grcm38")
+
+dir.create("Inhibitory",showWarnings = F)
+dir.create("Inhibitory/Inhibitory_DEG_Cocaine",showWarnings = F)
+
+for(clus in names(inhibitory_DEG) ){
+  for(period in names(inhibitory_DEG[[clus]])){
+    
+    
+    if(is.data.frame(inhibitory_DEG[[clus]][[period]])){
+      fname = paste0("Inhibitory/Inhibitory_DEG_Cocaine/Inhib_",clus,"_",period,".csv")
+      df  = topGene(inhibitory_DEG[[clus]][[period]],phase = "both",
+                    number = 30000,p.value = 0.05)
+      
+      if(nrow(df)>0){
+        pos <- match(df$Gene.name, grcm38$symbol)
+        df$bioType = grcm38$biotype[pos]
+        df$Description = grcm38$description[pos]
+      }
+      
+      write.csv(df, file=fname)  
+    }
+  }
+}
+```
+
+
+
+## Split Excitatory into 2 groups
+
+```{r}
+PFC_excitatory_Saline_sobj <- SubsetData(PFC_excitatory_sobj,subset.name = "treatment",accept.value = "Saline",subset.raw = T)
+
+pos <- which(PFC_excitatory_Saline_sobj@data["Setd1a",]>0)
+
+exctitatory_setd1a_ident  = rep("No_Setd1a",length(PFC_excitatory_Saline_sobj@cell.names))
+exctitatory_setd1a_ident[pos] = "Setd1a"
+
+
+PFC_excitatory_Saline_sobj@meta.data$hasSetd1a = exctitatory_setd1a_ident
+
+TSNEPlot(PFC_excitatory_Saline_sobj,do.label = T, group.by="hasSetd1a",colors.use = pal_npg()(2))
+```
+
+```{r}
+PFC_excitatory_Saline_sobj <- SetIdent(PFC_excitatory_Saline_sobj, ident.use = PFC_excitatory_Saline_sobj@meta.data$hasSetd1a)
+Setd1a_DE_markers <- FindMarkers(PFC_excitatory_Saline_sobj,test.use = "bimod",logfc.threshold = 0,ident.1 = "Setd1a")
+
+Setd1a_DE_markers = subset(Setd1a_DE_markers,avg_logFC>0)
+rownames(Setd1a_DE_markers) = Setd1a_DE_markers$gene
+
+
+
+
+```
+
+
+# Differential expression of non-neuronal cells
+
+```{r}
+
+
+```
+
+
+## check Tac2
+
+```{r}
+require(eulerr)
+Tac2 <- PFC_inhibitory_sobj@data["Tac2", ]>0
+Vip <- PFC_inhibitory_sobj@data["Vip", ]>0
+Htr3a <- PFC_inhibitory_sobj@data["Htr3a", ]>0
+
+ovp = c("Tac2&Vip"=sum(Tac2 & Vip & !Htr3a),
+        "Tac2&Vip&Htr3a"=sum(Tac2 & Vip & Htr3a),
+        "Tac2&Htr3a"=sum(Tac2 & !Vip & Htr3a),
+        "Vip&Htr3a"=sum(!Tac2 & Vip & Htr3a),
+        "Tac2"=sum(Tac2 & !Vip & !Htr3a),
+        "Vip"=sum(!Tac2 & Vip & !Htr3a),
+        "Htr3a"=sum(!Tac2 & !Vip & Htr3a)
+        )
+
+fit <- euler(ovp)
+
+plot(fit, 
+     fill_opacity = 0.4,
+     counts=TRUE, fill=ggsci::pal_jco()(4),
+     lwd=1.5, main="Ovverlap between Tac2, Vip and Htr3a")
+
+```
+
+## Load IPA pathways data
+
+```{r}
+require(readxl)
+IPA_results <- list.files("D:/Projects/Saline_Cocaine_Morphine_scRNASeq/20170808_PC_PooledAllSamples/PFC_pooledAllBatches_analysis/Clustering_08082018/Excitatory/Excitatory_DEG_Cocaine_005/IPA_results",pattern = "*.xls",full.names = T)
+
+IPA_results = grep("Exc_",IPA_results,value = T)
+
+pathway_enrichment <- data.frame()
+disease_enrichemt <- data.frame()
+
+for(f in IPA_results){
+
+  smp = gsub(".xls","",basename(f))
+  print(smp)
+  smp = unlist(strsplit(smp,split = "_"))
+  
+  tmp = read_excel(f)
+  
+  colnames(tmp)[1]="info"
+  
+  headers_pos = grep("My Project", tmp$info)
+  
+  # Get pathways
+  pathways_hdr = grep("Canonical Pathways",tmp$info[headers_pos])
+  pathway_tbl = tmp[(headers_pos[pathways_hdr]+1):(headers_pos[pathways_hdr+1]-1),]
+  colnames(pathway_tbl) = pathway_tbl[1,]
+  pathway_tbl = pathway_tbl[-1,]
+  pathway_tbl = pathway_tbl[,!is.na(colnames(pathway_tbl))]
+  
+  pathway_tbl$cluster = smp[2]
+  colnames(pathway_tbl)[1:2] = c("Pathway","logPval")
+  pathway_tbl <- subset(pathway_tbl, logPval > -log10(0.05))
+  pathway_tbl <- pathway_tbl[order(pathway_tbl$logPval,decreasing = T),]
+  #pathway_enrichment <- rbind(pathway_enrichment,head(pathway_tbl,5))
+  pathway_enrichment <- rbind(pathway_enrichment,pathway_tbl)
+  
+  # Get diseases
+  
+  diseases_hdr = grep("Diseases and Bio Functions",tmp$info[headers_pos])
+  disease_tbl = tmp[(headers_pos[diseases_hdr]+1):(headers_pos[diseases_hdr+1]-1),]
+  colnames(disease_tbl) = disease_tbl[1,]
+  disease_tbl = disease_tbl[-1,]
+  disease_tbl = disease_tbl[,!is.na(colnames(disease_tbl))]
+  disease_tbl$cluster = smp[2]
+  
+  colnames(disease_tbl)[c(3:4,10)] <- c("Disease","pvalue","nbMolecules")
+  disease_tbl <- subset(disease_tbl, pvalue < 0.05)
+  
+  disease_tbl <- disease_tbl[order(disease_tbl$pvalue),]
+  
+  #disease_enrichemt <- rbind(disease_enrichemt, head(disease_tbl,5))
+  disease_enrichemt <- rbind(disease_enrichemt, disease_tbl)
+}
+```
+
+```{r}
+#pathway_enrichment <- read.csv("IPA_Cocaine_DEG/pathway_enrichment_filtered.csv")
+colnames(pathway_enrichment)[1] <- "Pathway"
+pathway_enrichment$logPval <- as.numeric(pathway_enrichment$logPval)
+pathway_enrichment$Ratio <- as.numeric(pathway_enrichment$Ratio)
+
+pathway_enrichment <- pathway_enrichment[grep("Hypusine",pathway_enrichment$Pathway,invert = T,ignore.case = T),]
+
+pathway_enrichment$cluster <- factor(pathway_enrichment$cluster, levels = 1:13)
+
+ggplot(pathway_enrichment, aes(x=cluster,y=Pathway,color=logPval)) + geom_point(aes(size=Ratio)) + theme_bw() + scale_color_gsea() +
+  theme(axis.text = element_text(colour = "black"))
+```
+
+
+
+```{r}
+require(reshape2)
+
+pathway_enrichment_mat <- dcast(pathway_enrichment,Pathway ~ cluster,value.var = "logPval",fill = 0)
+
+rownames(pathway_enrichment_mat) <- pathway_enrichment_mat$Pathway
+pathway_enrichment_mat$Pathway = NULL
+
+# Order them by cluster
+
+labels_order <- c()
+
+for(cls in colnames(pathway_enrichment_mat)){
+  pathway_enrichment_mat = pathway_enrichment_mat[order(pathway_enrichment_mat[,cls],decreasing = T),]
+  
+  pos <- which(pathway_enrichment_mat[,cls]>0)
+  
+  labels_order <- c(labels_order, rownames(pathway_enrichment_mat)[pos])
+}
+
+labels_order = unique(labels_order)
+
+pathway_enrichment_mat[pathway_enrichment_mat>6]=6
+
+pheatmap(pathway_enrichment_mat[labels_order,],cluster_cols = F,cluster_rows = F,color = viridis::viridis(10,option = "D"))
+
+write.csv(pathway_enrichment_mat[labels_order,],file = "/Excitatory/Excitatory_DEG_Cocaine_005/IPA_results/pathways_enrichment.csv")
+
+```
+
+
+
+```{r}
+lbls_toSelect = labels_order[c(4,6,3,10,13,16,17,20,27,26,42,48,54.57,58,60,67,74,75,76,80,85,90,96,103,104,105,106,113)]
+pheatmap(pathway_enrichment_mat[lbls_toSelect,],cluster_cols = F,cluster_rows = F,
+         color = rev(brewer.pal(11,name = "Spectral")))
+
+
+```
+
+
+
+```{r}
+#disease_enrichemt <- read.csv("IPA_Cocaine_DEG/disease_enrichemt_filtered.csv")
+
+disease_enrichemt <- disease_enrichemt[grep("cancer",disease_enrichemt$Disease,invert = T,ignore.case = T),]
+disease_enrichemt <- disease_enrichemt[grep("tumor",disease_enrichemt$Disease,invert = T,ignore.case = T),]
+disease_enrichemt <- disease_enrichemt[grep("blastoma",disease_enrichemt$Disease,invert = T,ignore.case = T),]
+disease_enrichemt <- disease_enrichemt[grep("carcinoma",disease_enrichemt$Disease,invert = T,ignore.case = T),]
+disease_enrichemt <- disease_enrichemt[grep("myoma",disease_enrichemt$Disease,invert = T,ignore.case = T),]
+disease_enrichemt <- disease_enrichemt[grep("lymphoma",disease_enrichemt$Disease,invert = T,ignore.case = T),]
+disease_enrichemt <- disease_enrichemt[grep("sarcoma",disease_enrichemt$Disease,invert = T,ignore.case = T),]
+disease_enrichemt <- disease_enrichemt[grep("infection",disease_enrichemt$Disease,invert = T,ignore.case = T),]
+disease_enrichemt <- disease_enrichemt[grep("malignant",disease_enrichemt$Disease,invert = T,ignore.case = T),]
+disease_enrichemt <- disease_enrichemt[grep("cytoma",disease_enrichemt$Disease,invert = T,ignore.case = T),]
+disease_enrichemt <- disease_enrichemt[grep("Lichen",disease_enrichemt$Disease,invert = T,ignore.case = T),]
+disease_enrichemt <- disease_enrichemt[grep("inemia",disease_enrichemt$Disease,invert = T,ignore.case = T),]
+disease_enrichemt <- disease_enrichemt[grep("Leukemia",disease_enrichemt$Disease,invert = T,ignore.case = T),]
+disease_enrichemt <- disease_enrichemt[grep("Turnover",disease_enrichemt$Disease,invert = T,ignore.case = T),]
+disease_enrichemt <- disease_enrichemt[grep("Turnover",disease_enrichemt$Disease,invert = T,ignore.case = T),]
+
+
+
+disease_enrichemt_filterd = data.frame()
+
+for(cls in unique(disease_enrichemt$cluster)){
+  tmp = subset(disease_enrichemt, cluster == cls)
+  
+  tmp = tmp[order(tmp$pvalue),]
+  tmp = head(tmp,10)
+  
+  disease_enrichemt_filterd = rbind(disease_enrichemt_filterd, tmp)
+}
+
+disease_enrichemt_filterd <- disease_enrichemt_filterd[grep("Benign",disease_enrichemt_filterd$Disease,invert = T,ignore.case = T),]
+disease_enrichemt_filterd <- disease_enrichemt_filterd[grep("metastasis",disease_enrichemt_filterd$Disease,invert = T,ignore.case = T),]
+disease_enrichemt_filterd <- disease_enrichemt_filterd[grep("deafness",disease_enrichemt_filterd$Disease,invert = T,ignore.case = T),]
+disease_enrichemt_filterd <- disease_enrichemt_filterd[grep("Autosomal",disease_enrichemt_filterd$Disease,invert = T,ignore.case = T),]
+disease_enrichemt_filterd <- disease_enrichemt_filterd[grep("Parkinson",disease_enrichemt_filterd$Disease,invert = T,ignore.case = T),]
+disease_enrichemt_filterd <- disease_enrichemt_filterd[grep("Peripheral",disease_enrichemt_filterd$Disease,invert = T,ignore.case = T),]
+disease_enrichemt_filterd <- disease_enrichemt_filterd[grep("endocrine",disease_enrichemt_filterd$Disease,invert = T,ignore.case = T),]
+disease_enrichemt_filterd <- disease_enrichemt_filterd[grep("Abnormal",disease_enrichemt_filterd$Disease,invert = T,ignore.case = T),]
+
+disease_enrichemt_filterd$pvalue <- as.numeric(disease_enrichemt_filterd$pvalue)
+disease_enrichemt_filterd$nbMolecules <- as.numeric(disease_enrichemt_filterd$nbMolecules)
+disease_enrichemt_filterd$cluster <- factor(disease_enrichemt_filterd$cluster, levels = 1:13)
+ggplot(disease_enrichemt_filterd, aes(x=cluster,y=Disease,color=-log10(pvalue))) + geom_point(aes(size=nbMolecules)) + theme_bw() + scale_color_gsea() +
+   theme(axis.text = element_text(colour = "black"))
+
+```
+
+```{r}
+require(reshape2)
+
+
+disease_enrichemt_filterd$log10pval = -log10(disease_enrichemt_filterd$pvalue)
+
+disease_enrichemt_filterd_mat <- dcast(disease_enrichemt_filterd,Disease ~ cluster,value.var = "log10pval",fill = 0)
+
+rownames(disease_enrichemt_filterd_mat) <- disease_enrichemt_filterd_mat$Disease
+disease_enrichemt_filterd_mat$Disease = NULL
+
+# Order them by cluster
+
+labels_order <- c()
+
+for(cls in colnames(disease_enrichemt_filterd_mat)){
+  disease_enrichemt_filterd_mat = disease_enrichemt_filterd_mat[order(disease_enrichemt_filterd_mat[,cls],decreasing = T),]
+  
+  pos <- which(disease_enrichemt_filterd_mat[,cls]>0)
+  
+  labels_order <- c(labels_order, rownames(disease_enrichemt_filterd_mat)[pos])
+}
+
+labels_order = unique(labels_order)
+
+
+pheatmap(disease_enrichemt_filterd_mat[labels_order,],cluster_cols = F,cluster_rows = F,color = viridis::viridis(10,option = "D"))
+
+```
+
+
+## Plot a tSNE summarizing all the clusters in the tSNE
+
+
+```{r}
+require(RColorBrewer)
+mains_cols=  c("#9F248F", pal_simpsons()(10)[c(1,3:5,9:10)])
+
+cellTypes = names(table(all_cell_inDD_sobj@meta.data$CellType))
+names(mains_cols) = cellTypes
+
+clus_cols = c()
+
+for(ct in cellTypes){
+  
+  tmp = subset(all_cell_inDD_sobj@meta.data, CellType == ct)
+  
+  cls_ord = names(table(tmp$L2_clusters))
+  clus_id = gsub("\\w+_","",cls_ord)
+  ord = order(as.numeric(clus_id))
+  
+  
+  cls_col =  colorRampPalette(c("white",mains_cols[ct]))(2*length(cls_ord)+2)[-c(1:2)][seq(1,2*length(cls_ord),by = 2)]
+  names(cls_col) = cls_ord[ord] 
+  
+  clus_cols = c(clus_cols,cls_col)
+}
+
+
+TSNEPlot(all_cell_inDD_sobj,group.by = "L2_clusters",colors.use = colorRampPalette(brewer.pal(8,"Set1"))(48))
+
+```
+
+
+```{r}
+nbSaline_cocaine <- table(all_cell_inDD_sobj@meta.data$treatment,all_cell_inDD_sobj@meta.data$Period)
+nbSaline_cocaine = as.matrix(nbSaline_cocaine)
+
+nbSaline_cocaine = apply(nbSaline_cocaine,2,function(x) x/sum(x))
+nbSaline_cocaine_mlt = reshape2::melt(nbSaline_cocaine)
+colnames(nbSaline_cocaine_mlt) = c("Treatment","Phase","Ratio")
+
+nbSaline_cocaine_mlt$Phase = factor(nbSaline_cocaine_mlt$Phase,levels = c("Maintenance","withdraw_48h","withdraw_15d"))
+
+ggplot(nbSaline_cocaine_mlt, aes(x=Phase, y=Ratio,fill=Treatment)) +geom_bar(stat = "identity",width = 0.8) + theme_bw() + scale_fill_manual(values = c("#00ADDC","#ED0B70"))
+```
+
+
+```{r}
+
+tmp = all_cell_inDD_sobj@meta.data %>% 
+        group_by(Period,CellType) %>% mutate(sum_cell=n()) %>% group_by(treatment)
+
+nbSaline_cocaine <- table(all_cell_inDD_sobj@meta.data$treatment,all_cell_inDD_sobj@meta.data$CellType)
+nbSaline_cocaine = as.matrix(nbSaline_cocaine)
+
+nbSaline_cocaine = apply(nbSaline_cocaine,2,function(x) x/sum(x))
+nbSaline_cocaine_mlt = reshape2::melt(nbSaline_cocaine)
+colnames(nbSaline_cocaine_mlt) = c("Treatment","CellType","Ratio")
+
+Neuro = c("Excitatory","Inhibitory")
+NonNeuro = setdiff(levels(nbSaline_cocaine_mlt$CellType), Neuro)
+
+nbSaline_cocaine_mlt$CellType = factor(nbSaline_cocaine_mlt$CellType, levels = c(NonNeuro,Neuro))
+
+ggplot(nbSaline_cocaine_mlt, aes(x=CellType, y=Ratio,fill=Treatment)) +
+  geom_bar(stat = "identity",width = 0.8) + 
+  theme_bw() + scale_fill_manual(values = c("#00ADDC","#ED0B70")) + coord_flip()
+```
+
+
+
+
+# Overlap the GO from Cocaine and P21 
+
+```{r fig.height=6, fig.width=4.5}
+common_Pathways <- merge(P21_pathway_enrichment[,c("Pathway","cluster")],pathway_enrichment[,c("Pathway","cluster")])
+
+common_Pathways$cluster = factor(common_Pathways$cluster,levels = 1:13)
+
+ggplot(common_Pathways, aes(x=cluster, y=Pathway)) + geom_point(color="#5350A2",size=2) + theme_bw() + ggtitle("Common Pathways\n(P21 & Cocaine)") 
+```
+
+
+```{r fig.height=10, fig.width=5}
+common_diseases <- merge(P21_disease_enrichemt[,c("Disease","cluster")],disease_enrichemt[,c("Disease","cluster")])
+ggplot(common_diseases, aes(x=cluster, y=Disease)) + geom_point(color="#5350A2",size=2) + theme_bw() + ggtitle("Common Diseases\n(P21 & Cocaine)") 
+```
+
+
+
+# Checb the D1 positive cells
+
+
+```{r}
+require(dplyr)
+D1_mkrs <- list()
+D1_Neg_mkrs <- list()
+
+
+for(clus in c("5","7","8","13")){
+  
+  ids = rep("other",length(PFC_excitatory_sobj@cell.names))
+  inClus = as.character(PFC_excitatory_sobj@meta.data$L1_cluster) %in%  clus
+  D1_pos <- PFC_excitatory_sobj@data["Oprk1",] >0
+  
+
+  ids[inClus & D1_pos] = paste0("inClus_",clus)
+  
+  if(length(table(ids))==2 & min(table(ids))>3){
+    PFC_excitatory_sobj = SetIdent(PFC_excitatory_sobj, ident.use = ids)
+    D1_mkrs[[clus]] = FindMarkers(PFC_excitatory_sobj,ident.1 = paste0("inClus_",clus),logfc.threshold = log(2))
+  }
+  
+  ids = rep("other",length(PFC_excitatory_sobj@cell.names))
+  ids[inClus & !D1_pos] = paste0("inClus_",clus)
+  
+  
+  if(length(table(ids))==2 & min(table(ids))>3){
+    PFC_excitatory_sobj = SetIdent(PFC_excitatory_sobj, ident.use = ids)
+    D1_Neg_mkrs[[clus]] = FindMarkers(PFC_excitatory_sobj,ident.1 = paste0("inClus_",clus),logfc.threshold = log(2))
+  }
+  
+}
+
+
+D1_mkrs_sig <- lapply(D1_mkrs, function(x) subset(x, p_val_adj < 0.05 & avg_logFC > 0 & pct.1 >0.4 & pct.2 < 0.3 &  (pct.1-pct.2)/pct.1>0.4))
+D1_Neg_mkrs_sig <- lapply(D1_Neg_mkrs, function(x) subset(x, p_val_adj < 0.05 & avg_logFC > 0 & pct.1 >0.4 & pct.2 < 0.3 &  (pct.1-pct.2)/pct.1>0.4))
+
+
+mrks_sig = list()
+
+for(clus in names(D1_mkrs_sig)){
+  
+  toUse = setdiff(rownames(D1_mkrs_sig[[clus]]), rownames(D1_Neg_mkrs_sig[[clus]])) 
+  
+  mrks_sig[[clus]] =  D1_mkrs_sig[[clus]][toUse,]
+}
+
+dir.create("Excitatory/Oprk1_Cell_markers",showWarnings = F)
+
+for(clus in names(mrks_sig)){
+  fname = paste0("Excitatory/Oprk1_Cell_markers/Oprk1_Exc",clus,"_markers.csv")
+  
+  write.csv(mrks_sig[[clus]],file = fname)
+}
+```
+
+
+
+# Check the expression of TFs in excitatory neurons
+
+### Excitatory
+
+```{r}
+riken_tfs = read.csv("Data/RIKEN_mm_TF.csv",stringsAsFactors = F)
+
+PFC_excitatory_saline_sobj = SubsetData(PFC_excitatory_sobj, subset.name ="treatment", accept.value = "Saline",subset.raw = T)
+
+touse = intersect(riken_tfs$Symbol, rownames(PFC_excitatory_saline_sobj@data))
+ae = AverageExpression(PFC_excitatory_saline_sobj)
+ad = AverageDetectionRate(PFC_excitatory_saline_sobj)
+
+ad[ad < 0.2] = 0
+
+tmp = ae[touse,] * ad[touse,]
+
+rs = apply(tmp,1,function(x) sum(x>2))
+
+touse = touse[rs>0]
+
+pdf("Excitatory/TFs_expression.pdf",width = 10,height = 150)
+MarkerViolonPlot(PFC_excitatory_saline_sobj,
+                 features = touse,
+                 cell.ident = PFC_excitatory_saline_sobj@ident, 
+                 cols.use = generateColors(28),inGrid = T)
+dev.off()
+```
+
+
+### Inhibitory
+
+```{r}
+load("PFC_inhibitory_sobj.RData")
+
+touse = intersect(riken_tfs$Symbol, rownames(PFC_inhibitory_sobj@data))
+ae = AverageExpression(PFC_inhibitory_sobj)
+ad = AverageDetectionRate(PFC_inhibitory_sobj)
+
+ad[ad < 0.2] = 0
+
+tmp = ae[touse,] * ad[touse,]
+
+rs = apply(tmp,1,function(x) sum(x>2))
+
+touse = touse[rs>0]
+
+pdf("Inhibitory/Inhib_TFs_expression.pdf",width = 10,height = 150)
+MarkerViolonPlot(PFC_inhibitory_sobj,
+                 features = touse,
+                 cell.ident = PFC_inhibitory_sobj@ident, 
+                 cols.use = generateColors(12),inGrid = T)
+dev.off()
+
+```
+
+
+

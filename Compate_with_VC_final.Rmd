@@ -1,0 +1,126 @@
+---
+title: "Compare with VC"
+author: "Mohamed Nadhir Djekidel"
+date: "December 10, 2018"
+output: html_document
+---
+
+# load libraries 
+
+```{r}
+require(scrattch.hicat)
+require(Seurat)
+```
+
+
+# load Visual cortex data
+
+
+```{r}
+vc_expr <- read.csv("../../../Public/AllanBrain/mouse_VISp_gene_expression_matrices_2018-06-14/mouse_VISp_2018-06-14_exon-matrix.csv")
+rownames(vc_expr) <- vc_expr$X
+vc_expr$X=NULL
+vc_meta <- read.csv("../../../Public/AllanBrain/mouse_VISp_gene_expression_matrices_2018-06-14/mouse_VISp_2018-06-14_samples-columns.csv")
+rownames(vc_meta) <- vc_meta$sample_name
+
+vc_sobj <- CreateSeuratObject(raw.data = Matrix(data.matrix(vc_expr)),
+                              project = "Allen_VC",
+                              normalization.method = "LogNormalize",
+                              min.genes = 1500,
+                              min.cells = 3,
+                              scale.factor = 1e-6,
+                              meta.data = vc_meta)
+
+vc_sobj <- ScaleData(vc_sobj,vars.to.regress = c("total_reads","percent_exon_reads","seq_batch","percent_mt_exon_reads","nUMI"))
+
+
+
+vc_neurons_sobj <- SubsetData(vc_sobj, subset.name = "class",accept.value =  "Glutamatergic",subset.raw = T)
+vc_neurons_sobj
+```
+
+```{r}
+# remove any ALM "leaky" cells
+toUse <-grep("ALM",vc_neurons_sobj@meta.data$cluster,invert=T)
+vc_neurons_sobj = SubsetData(vc_neurons_sobj,   cells.use = vc_neurons_sobj@cell.names[toUse], subset.raw=T)
+
+
+vc_neurons_sobj = NormalizeData(vc_neurons_sobj)
+vc_neurons_sobj = ScaleData(vc_neurons_sobj,
+                            vars.to.regress = c("total_reads","percent_mt_exon_reads","complexity_cg"),do.par=T,num.cores=4)
+```
+
+
+# Load PFC data 
+
+```{r}
+PFC_excitatory_saline_sobj = FindVariableGenes(PFC_excitatory_saline_sobj)
+vc_neurons_sobj = FindVariableGenes(vc_neurons_sobj)
+
+PFC_excitatory_saline_sobj = RunPCA(PFC_excitatory_saline_sobj)
+PFC_excitatory_saline_sobj = ProjectPCA(PFC_excitatory_saline_sobj)
+
+vc_neurons_sobj = RunPCA(vc_neurons_sobj)
+vc_neurons_sobj = ProjectPCA(vc_neurons_sobj)
+
+PFC_excitatory_saline_sobj@meta.data$Source ="mPFC"
+vc_neurons_sobj@meta.data$Source = "VisualCortex"
+
+PFC_excitatory_saline_sobj@meta.data$Clusters_L2 = PFC_excitatory_saline_sobj@ident
+vc_neurons_sobj@meta.data$Clusters_L2 = as.character(vc_neurons_sobj@meta.data$cluster)
+```
+
+
+# Set Clusters
+
+```{r}
+PFC_excitatory_saline_sobj@meta.data$Clusters_L1 = as.character(PFC_excitatory_saline_sobj@meta.data$L1_cluster)
+vc_neurons_sobj@meta.data$Clusters_L1 = as.character(vc_neurons_sobj@meta.data$subclass)
+```
+
+
+# Prepare data
+
+```{r}
+PFC.dat = as.matrix(PFC_excitatory_saline_sobj@data[var_genes,])
+PFC.cl = PFC_excitatory_saline_sobj@ident
+VC.dat = as.matrix(vc_neurons_sobj@data[var_genes,])
+VC.cl = vc_neurons_sobj@meta.data$Clusters_L2
+names(VC.cl) = vc_neurons_sobj@cell.names
+```
+
+
+# Calculate similarity
+
+```{r}
+VC_predIdent=map_cl_summary.my(PFC.dat, PFC.cl, VC.dat, VC.cl)
+VC.map.df = VC_predIdent$cl.map.df
+
+
+PFC_predIdent=map_cl_summary.my(VC.dat, VC.cl, PFC.dat, PFC.cl)
+PFC.map.df = PFC_predIdent$cl.map.df
+ 
+PFC.map.df$type = "PFC_predIdent"
+PFC.map.df$PFC.cl = PFC.map.df$org.cl
+PFC.map.df$VC.cl = PFC.map.df$map.cl
+VC.map.df$type = "VC_predIdent"
+VC.map.df$PFC.cl = VC.map.df$map.cl
+VC.map.df$VC.cl = VC.map.df$org.cl
+ 
+comb.map = rbind(PFC.map.df, VC.map.df)
+```
+
+###Pruning
+
+```{r}
+cell.map.df = rbind(VC_predIdent$map.df, PFC_predIdent$map.df)
+score.th = mean(cell.map.df$pred.score) - sd(cell.map.df$pred.score)* 1.64
+comb.map.all=comb.map
+comb.map=comb.map[comb.map$Prob>0.2 & comb.map$pred.score > score.th,]
+
+
+PFC_2_VC.best.map=with(PFC.map.df, tapply(1:nrow(PFC.map.df), org.cl, function(x)as.character(map.cl)[x[which.max(Freq[x])]]))
+VC_2_PFC.best.map=with(VC.map.df, tapply(1:nrow(VC.map.df), org.cl, function(x)as.character(map.cl)[x[which.max(Freq[x])]]))
+```
+
+

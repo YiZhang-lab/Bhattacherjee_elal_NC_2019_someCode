@@ -1,0 +1,404 @@
+---
+title: "Non-neurona analysis"
+author: "Mohamed Nadhir Djekidel"
+date: "September 8, 2018"
+output: html_document
+---
+
+
+```{r}
+load("Excitatory/PFC_CCA_cocaine_Saline_sobj.RData")
+source("utils.R")
+
+TSNEPlot(PFC_CCA_cocaine_Saline_sobj,do.label = T, group.by="CellType", colors.use = pal_npg()(10),label.size = 5, do.return=TRUE)+
+  ggtitle(paste0("PFC cells (n=",length(PFC_CCA_cocaine_Saline_sobj@cell.names)," cells)")) + 
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+
+
+```{r}
+
+non_neuro_sobjs <- list()
+
+non_neuroclus = setdiff(names(table(PFC_CCA_cocaine_Saline_sobj@meta.data$CellType)),c("Excitatory","Inhibitory"))
+
+for(nonneuo in non_neuroclus){
+  print(nonneuo)
+
+  #sobj <- SubsetData(PFC_CCA_cocaine_Saline_sobj,subset.name = "CellType",accept.value = nonneuo,subset.raw = T)
+  #sobj <- removeMitoandRiboGenes_raw(sobj)
+  cat("Getting saline samples...\n")
+  #sobj_saline <- SubsetData(sobj, subset.name="treatment", accept.value="Saline")
+  cat("Getting Cocaine samples...\n")
+  #sobj_cocaine <- SubsetData(sobj, subset.name="treatment", accept.value="Cocaine")
+
+  cat("Getting variable genes ...\n")
+  #sobj_saline <- FindVariableGenes(sobj_saline,do.plot=FALSE,y.cutoff = 2)
+  #sobj_cocaine <- FindVariableGenes(sobj_cocaine,do.plot=FALSE,y.cutoff = 2)
+
+  cat("Running CCA analysis ...\n")
+  #non_neuro_sobjs[[nonneuo]] <- RunCCA(sobj_saline, sobj_cocaine)
+
+  cat("AlignSubspace ...\n")
+  #non_neuro_sobjs[[nonneuo]] = AlignSubspace(non_neuro_sobjs[[nonneuo]],
+  #                                reduction.type = "cca",
+  #                                grouping.var = "Period",
+  #                                dims.align = 1:12)
+  cat("MetageneBicorPlot ...\n")
+  p_exc = MetageneBicorPlot(non_neuro_sobjs[[nonneuo]], grouping.var = "Period", 
+                            dims.eval = 1:12, display.progress = TRUE,return.mat = T)
+  tmp = subset(p_exc ,bicor >= 0.15)
+  toUse = table(tmp$cc)>2
+  toUse = as.numeric(names(table(tmp$cc))[toUse])
+  
+  cat("Finding clusters...\n")
+  non_neuro_sobjs[[nonneuo]] <- FindClusters(non_neuro_sobjs[[nonneuo]],reduction.type = "cca.aligned",dims.use = toUse,
+                                             resolution = 2)
+  
+  cat("Remove neuronal clusters\n")
+  ae = AverageDetectionRate(non_neuro_sobjs[[nonneuo]])
+  
+  toRemove <- which(as.numeric(ae["Snap25",]) > 0.5 & ( as.numeric(ae["Slc17a7",])>0.5 | as.numeric(ae["Gad2",])>0.5 ) )
+  
+  toRemove = colnames(ae)[toRemove]
+  toKeep = setdiff(colnames(ae), toRemove)
+  
+  non_neuro_sobjs[[nonneuo]] = SubsetData(non_neuro_sobjs[[nonneuo]],ident.use = toKeep,subset.raw = T)
+  
+  #non_neuro_sobjs[[nonneuo]] <- FindVariableGenes(non_neuro_sobjs[[nonneuo]],y.cutoff = 1)
+  #non_neuro_sobjs[[nonneuo]] = RunPCA(non_neuro_sobjs[[nonneuo]],pc.genes = non_neuro_sobjs[[nonneuo]]@var.genes)
+  
+  non_neuro_sobjs[[nonneuo]] <- BuildSNN(non_neuro_sobjs[[nonneuo]],reduction.type = "cca.aligned",save.SNN = T)
+  
+  connectivity <- Seurat:::CalcConnectivity(object = non_neuro_sobjs[[nonneuo]])
+  
+  non_neuro_sobjs[[nonneuo]] <- ValidateClusters_CCA.my(non_neuro_sobjs[[nonneuo]],top.genes = 100,
+                                                 pc.use = touse,
+                                                 min.connectivity = quantile(connectivity,0.9) )
+  
+  
+  non_neuro_sobjs[[nonneuo]] <- BuildClusterTree(non_neuro_sobjs[[nonneuo]],reorder.numeric = T,do.reorder = T,do.plot = F)
+  cat("RunTSNE ...\n")
+  non_neuro_sobjs[[nonneuo]] <- RunTSNE(non_neuro_sobjs[[nonneuo]], 
+                                         reduction.use = "cca.aligned", dims.use = toUse)#c(1:5,7:8,10))
+}
+```
+
+
+# generate tNE plorts
+
+```{r}
+
+dir.create("nonNeurons",showWarnings = F)
+
+for(nonneuro in names(non_neuro_sobjs)){
+  dname = paste0("nonNeurons/",nonneuro)
+  dir.create(dname,showWarnings = F)
+  
+  fname = file.path(dname,paste0(nonneuro,"_tSNE.pdf"))
+  pdf(fname,width = 5,height = 4)
+  TSNEPlot(non_neuro_sobjs[[nonneuro]],do.label = T,pt.size = 0.6,colors.use = generateColors(20))
+  dev.off()
+}
+
+```
+
+```{r fig.height=10, fig.width=8}
+dir.create("nonNeurons",showWarnings = F)
+
+for(nonneuro in names(non_neuro_sobjs)){
+  dname = paste0("nonNeurons/",nonneuro)
+  
+  fname = file.path(dname,paste0(nonneuro,"_tSNE_DD.pdf"))
+  #pdf(fname,width = 5,height = 4)
+  VlnPlot(non_neuro_sobjs[[nonneuro]],features.plot = c("Snap25","Slc17a7","Gad2"), 
+          cols.use =  generateColors(20),nCol = 1,
+          point.size.use = 0)
+  ggsave(fname, width = 3,height = 4)
+  
+  
+  p1= FeaturePlot(non_neuro_sobjs[[nonneuro]],"Snap25",do.return = T)[[1]]
+  p2= TSNEPlot(non_neuro_sobjs[[nonneuro]],do.label = T,colors.use = generateColors(20),do.return = T)
+  
+  fname = file.path(dname,paste0(nonneuro,"_tSNE_DD2.pdf"))
+  pdf(fname,width = 12,height = 4)
+  gridExtra::grid.arrange(p1,p2,ncol=2)
+  dev.off()
+}
+```
+
+# Find markersr
+
+```{r}
+
+non_neuro_markes <- list()
+
+
+for(nonneuo in names(non_neuro_sobjs)){
+  print(nonneuo)
+  dname = paste0("nonNeurons/",nonneuro)
+
+  non_neuro_markes[[nonneuo]] <- FindAllMarkers(non_neuro_sobjs[[nonneuo]], logfc.threshold = log(1.5),only.pos = T,
+                                                test.use = "bimod",
+                                                latent.vars = c("nUMI","percent.mito","treatment"))
+}
+
+```
+
+
+# Print the markers heatmap
+
+```{r}
+
+for(nonneuo in names(non_neuro_markes)){
+  dname = paste0("nonNeurons/",nonneuo)
+  fname = paste0(dname,"/",nonneuo,"_markers_heatmap.pdf")
+  
+  pdf(fname,width = 6,height = 12)
+  PlotMarketGenesHeatmap(sobj = non_neuro_sobjs[[nonneuo]],
+                       sobj_mrks = non_neuro_markes[[nonneuo]],
+                       pct.1.thr = 0.5,
+                       pct.2.thr = 0.3,
+                       nbGenes = 10,
+                       is.pval = T,
+                       cols = c(pal_npg()(10), pal_nejm()(4),pal_jco()(7)),
+                       additional_markers = c("Snap25","Slc17a7","Gad2","Flt1",
+                                    "Aspa","Pdgfra","Neu4","Gja1",
+                                    "C1qa","Cldn5")
+                       )
+  dev.off()
+}
+
+```
+
+# Remove double droplets
+
+```{r}
+# nonneuro_toKeep <- list()
+# 
+# nonneuro_toKeep[["Astro"]] <- c(1:3)
+# nonneuro_toKeep[["Endo"]] <- c(1,3:8)
+# nonneuro_toKeep[["NF Oligo"]] <- c(2:5)
+# nonneuro_toKeep[["Oligo"]] <- c(1:3,7:8)
+# nonneuro_toKeep[["Oligo"]] <- c(1:3,7:8)
+# nonneuro_toKeep[["OPC"]] <- c(3:6)
+# 
+# for(nonneuo in names(non_neuro_sobjs)){
+#   non_neuro_sobjs[[nonneuo]] <- SubsetData(non_neuro_sobjs[[nonneuo]],
+#                                            ident.use = nonneuro_toKeep[[nonneuo]],
+#                                            subset.raw =T,do.scale = T)
+#   
+# # non_neuro_sobjs[[nonneuo]] <- FindVariableGenes(non_neuro_sobjs[[nonneuo]],y.cutoff = 1,x.low.cutoff = 0.5)
+# # non_neuro_sobjs[[nonneuo]] = RunPCA(non_neuro_sobjs[[nonneuo]],pc.genes = non_neuro_sobjs[[nonneuo]]@var.genes)
+# # 
+# # non_neuro_sobjs[[nonneuo]] <- FindClusters(non_neuro_sobjs[[nonneuo]],reduction.type = "cca.aligned",
+# #                                            dims.use = 1:6,resolution = 1.6,save.SNN = T,force.recalc = T)
+# # 
+# # connectivity <- Seurat:::CalcConnectivity(object = non_neuro_sobjs[[nonneuo]])
+# # 
+# # non_neuro_sobjs[[nonneuo]] <- ValidateClusters(non_neuro_sobjs[[nonneuo]],top.genes = 100,
+# #                                                pc.use = 1:6,
+# #                                                min.connectivity = quantile(connectivity,0.9) )
+# 
+# 
+# non_neuro_sobjs[[nonneuo]] <- BuildClusterTree(non_neuro_sobjs[[nonneuo]],reorder.numeric = T,do.reorder = T,do.plot = F)
+# cat("RunTSNE ...\n")
+# #non_neuro_sobjs[[nonneuo]] <- RunTSNE(non_neuro_sobjs[[nonneuo]], reduction.use = "cca", dims.use = 1:6)
+#   
+# }
+
+```
+
+
+## Merge similar clusters
+
+```{r}
+
+newIdents  <- list()
+
+newIdents[["Astro"]] = as.character(non_neuro_sobjs$Astro@ident)
+newIdents[["Astro"]][newIdents[["Astro"]] %in% c(2,5)] =2
+newIdents[["Astro"]][newIdents[["Astro"]] %in% c(3,4)] =3
+newIdents[["Astro"]][newIdents[["Astro"]] %in% c(7,8)] =7
+newIdents[["Astro"]][newIdents[["Astro"]] %in% c(9,11)] =9
+
+
+non_neuro_sobjs$Endo = SubsetData(non_neuro_sobjs$Endo,ident.remove = "1",subset.raw = T)
+newIdents[["Endo"]] = as.character(non_neuro_sobjs$Endo@ident)
+newIdents[["Endo"]][newIdents[["Endo"]] %in% c(2,4)] =2
+
+
+newIdents[["Microglia"]] = as.character(non_neuro_sobjs$Microglia@ident)
+newIdents[["Microglia"]][newIdents[["Microglia"]] %in% c(2,4)] =2
+newIdents[["Microglia"]][newIdents[["Microglia"]] %in% c(5,7)] =5
+
+
+non_neuro_sobjs$`NF Oligo` = SubsetData(non_neuro_sobjs$`NF Oligo`,ident.remove = "2",subset.raw = T)
+newIdents[["NF Oligo"]] = as.character(non_neuro_sobjs$`NF Oligo`@ident)
+newIdents[["NF Oligo"]][newIdents[["NF Oligo"]] %in% c(3,4)] = 3
+
+
+newIdents[["Oligo"]] = as.character(non_neuro_sobjs$Oligo@ident)
+newIdents[["Oligo"]][newIdents[["Oligo"]] %in% c(3,12)] = 3
+newIdents[["Oligo"]][newIdents[["Oligo"]] %in% c(7,11)] = 7
+
+non_neuro_sobjs$OPC = SubsetData(non_neuro_sobjs$OPC,ident.remove = "1",subset.raw = T)
+newIdents[["OPC"]] = as.character(non_neuro_sobjs$OPC@ident)
+newIdents[["OPC"]][newIdents[["OPC"]] %in% c(4,8)] =4
+
+
+for(nonneuo in names(newIdents)){
+  non_neuro_sobjs[[nonneuo]] = SetIdent(non_neuro_sobjs[[nonneuo]], ident.use = newIdents[[nonneuo]])
+  non_neuro_sobjs[[nonneuo]] = BuildClusterTree(non_neuro_sobjs[[nonneuo]],do.reorder = T,reorder.numeric = T,do.plot = F)
+}
+
+
+
+
+
+```
+
+
+```{r}
+
+for(nonneuro in names(non_neuro_sobjs)){
+  dname = paste0("nonNeurons/",nonneuro)
+  
+  
+  
+   # non_neuro_sobjs[[nonneuo]] <- RunTSNE(non_neuro_sobjs[[nonneuo]], 
+   #                                      reduction.use = "cca.aligned", dims.use = 1:6)
+   # 
+  fname = file.path(dname,paste0(nonneuro,"_tSNE_noDD.pdf"))
+  pdf(fname,width = 5,height = 4)
+  TSNEPlot(non_neuro_sobjs[[nonneuro]],do.label = T,pt.size = 0.6,colors.use = generateColors(20))
+  dev.off()
+}
+
+```
+
+
+## Find Markers
+
+```{r}
+non_neuro_markes <- list()
+
+for(nonneuro in names(non_neuro_sobjs)){
+  print(nonneuro)
+  # non_neuro_markes[[nonneuro]] <- FindAllMarkers(non_neuro_sobjs[[nonneuro]],test.use = "bimod")
+  # 
+  dname = paste0("nonNeurons/",nonneuro)
+    fname = file.path(dname,paste0(nonneuro,"_markers_heatmap.pdf"))
+    pdf(fname,width = 12,height = 10)
+    
+    non_neuro_markes[[nonneuro]] <- subset(non_neuro_markes[[nonneuro]], avg_logFC>0)
+  PlotMarketGenesHeatmap(non_neuro_sobjs[[nonneuro]],
+                       sobj_mrks = non_neuro_markes[[nonneuro]],
+                       pct.1.thr = 0.5,
+                       pct.2.thr = 0.3,
+                       is.pval = T,nbGenes = 10,
+                       cols = generateColors(length(unique(non_neuro_sobjs[[nonneuro]]@ident))))
+   dev.off()                    
+
+}
+
+```
+
+# Find Conserved markers
+
+```{r}
+# require(dplyr)
+# 
+# non_neuro_markes <- list()
+# 
+# for(nonneuro in names(non_neuro_sobjs)){
+#   print(nonneuro)
+#   non_neuro_markes[[nonneuro]] <- data.frame()
+# 
+# 
+#   cat("Getting conserved cluster markers...\n")
+#   for(cls in levels(non_neuro_sobjs[[nonneuro]]@ident)){
+#     tmp_mrks <- FindConservedMarkers(non_neuro_sobjs[[nonneuro]],ident.1 = cls,grouping.var = "Period")
+#     tmp_mrks$Cluster = cls
+#     tmp_mrks$gene = rownames(tmp_mrks)
+#     non_neuro_markes[[nonneuro]] <- rbind(non_neuro_markes[[nonneuo]], tmp_mrks)
+#   }
+#   
+#   cat("Selecting significant markers...\n")
+#   sig_markers <- non_neuro_markes[[nonneuro]] %>%
+#     group_by(Cluster) %>%
+#     #filter(Maintenance_p_val_adj < 1e-2 & Maintenance_avg_logFC > log(2) & (Maintenance_pct.1 > 0.2 & Maintenance_pct.2 < 0.2)) %>%
+#      filter(withdraw_48h_p_val_adj < 0.05 & withdraw_48h_avg_logFC > log(1.5) & (withdraw_48h_pct.1 > 0.5 & withdraw_48h_pct.2 < 0.2) |  withdraw_48h_pct.2 < 0.01) %>%
+#     filter(withdraw_15d_p_val_adj < 0.05 & withdraw_15d_avg_logFC > log(1.5) & (withdraw_15d_pct.1 > 0.5 & withdraw_15d_pct.2 < 0.2) | withdraw_15d_pct.2 < 0.1) %>%
+#     top_n(30)
+#   
+#   cat("Saving plot...\n")
+#   if(length(unique(sig_markers$gene))>2){
+#     # Plot the markers heatmap
+#     dname = paste0("nonNeurons/",nonneuro)
+#     fname = file.path(dname,paste0(nonneuro,"_markers_heatmap.pdf"))
+#     pdf(fname,width = 12,height = 10)
+#     plotMarkersHeatmap(non_neuro_sobjs[[nonneuro]],
+#                        markers = head(unique(sig_markers$gene),20),
+#                        clustersColors = generateColors(length(unique(non_neuro_sobjs[[nonneuro]]@ident))))
+#     dev.off()
+#   }
+# }
+```
+
+
+# get all the used cell
+
+```{r}
+load("Excitatory/PFC_excitatory_sobj.RData")
+load("PFC_inhibitory_sobj.RData")
+
+
+
+all_cells <- c(PFC_excitatory_sobj@cell.names, PFC_inhibitory_sobj@cell.names)
+all_idents <- c(paste0("Exc_",as.character(PFC_excitatory_sobj@ident)),
+                paste0("Inhib_", as.character(PFC_inhibitory_sobj@ident)))
+
+for( nonneuo in names(non_neuro_sobjs)){
+  all_cells <- c(all_cells, non_neuro_sobjs[[nonneuo]]@cell.names)
+  
+  all_idents <- c(all_idents,
+                  paste0(nonneuo,"_", as.character(non_neuro_sobjs[[nonneuo]]@ident)))
+}
+
+is_unique = !duplicated(all_cells)
+ 
+
+all_cell_inDD_sobj <- SubsetData(PFC_CCA_cocaine_Saline_sobj, cells.use = all_cells[is_unique], subset.raw = T)
+
+all_cell_inDD_sobj@meta.data$L2_clusters =""
+
+c@meta.data[all_cells[is_unique],]$L2_clusters =all_idents[is_unique]
+
+
+TSNEPlot(all_cell_inDD_sobj,do.label = T, group.by="CellType", colors.use = pal_npg()(10),label.size = 5, do.return=TRUE)+
+  ggtitle(paste0("PFC cells (n=",length(all_cell_inDD_sobj@cell.names)," cells)")) + 
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+```{r fig.height=6, fig.width=12}
+TSNEPlot(all_cell_inDD_sobj,do.label = T, group.by="L2_clusters", colors.use = generateColors(98),label.size = 5, do.return=TRUE)+
+  ggtitle(paste0("PFC cells (n=",length(all_cell_inDD_sobj@cell.names)," cells)")) + 
+  theme(plot.title = element_text(hjust = 0.5))
+
+```
+
+```{r}
+
+FeaturePlot(all_cell_inDD_sobj,c(#"Snap25",
+                                 "Slc17a7","Gad2",
+                                          "C1qa",
+                                          "Flt1", #Endo
+                                          "Aspa", # Oligo
+                                          "Gja1", #Astro
+                                          "Neu4",#, #NF oligo
+                                          "Pdgfra" #opc
+                                          
+                                          ),cols.use = c("grey80","#B71B1BFF"),pt.size = 0.2,nCol = 2)
+```

@@ -1,0 +1,92 @@
+---
+title: "Compare with Nestler"
+author: "Mohamed Nadhir Djekidel"
+date: "February 7, 2019"
+output: html_document
+---
+
+# load libraries
+
+```{r}
+require(SC2P)
+require(readxl)
+```
+
+
+# load our DEG data 
+
+```{r}
+load("Excitatory/Excitatory_DEG.RData")
+load("inhibitory_DEG.RData")
+load("FinalObjects/NonNeuro_DEG.RData")
+
+names(Excitatory_DEG) = paste0("Exc_",names(Excitatory_DEG))
+names(inhibitory_DEG) = paste0("Inhib_",names(inhibitory_DEG))
+
+deg_all = c(Excitatory_DEG,inhibitory_DEG,NonNeuro_DEG)
+```
+
+# get the list of DEG
+
+```{r}
+deg_all_sig = list()
+
+for(cellType in names(deg_all)){
+  deg_all_sig[[cellType]] = list()
+  for(period in names(deg_all[[cellType]])){
+    deg_all_sig[[cellType]][[period]] = list()  
+    if(is.data.frame(deg_all[[cellType]][[period]])){
+      df1  = topGene(deg_all[[cellType]][[period]],phase = "both",
+          number = 30000,p.value = 0.05)
+      deg_all_sig[[cellType]][[period]] <-df1 # subset(df1, Phase2 == "Y")
+    }
+  }
+}
+
+```
+
+# load Nestlet DEG data
+
+```{r}
+DEG_nestler_C24vS24 <- read_xlsx("../../../Public/Nestler_Cocaine_2018/Table_S1_DEGs.xlsx",sheet = "CCvSS")
+
+DEG_nestler_C24vS24_PFC <- DEG_nestler_C24vS24[,c("PFC","X__1","X__2")]
+colnames(DEG_nestler_C24vS24_PFC) = DEG_nestler_C24vS24_PFC[1,]
+DEG_nestler_C24vS24_PFC = DEG_nestler_C24vS24_PFC[-1,]
+
+nbovp = matrix(0,nrow=length(deg_all_sig),ncol=3)
+colnames(nbovp) = names(deg_all_sig$Exc_1)
+rownames(nbovp) = names(deg_all_sig)
+
+for(cellType in names(deg_all_sig)){
+  for(period in names(deg_all_sig[[cellType]])){
+    if(is.data.frame(deg_all_sig[[cellType]][[period]])){
+        nbovp[cellType,period] = length(intersect(as.character(deg_all_sig[[cellType]][[period]]$Gene.name), 
+                                                  as.character(DEG_nestler_C24vS24_PFC$GeneID) ))
+    }
+  }
+}
+```
+
+
+# Check the cellular composition of their data
+
+```{r}
+require(Seurat)
+require(pheatmap)
+load("FinalObjects/all_cell_inDD_saline_sobj.RData")
+
+ ae = AverageExpression(all_cell_inDD_saline_sobj)
+toUse = intersect(as.character(DEG_nestler_C24vS24_PFC$GeneID),rownames(ae))
+
+ph = log2(ae[toUse,]+1)
+```
+
+
+# Do overlap
+
+```{r}
+
+```
+
+

@@ -1,0 +1,273 @@
+---
+title: "excitatory neurons analysis by layer"
+author: "Mohamed Nadhir Djekidel"
+date: "October 3, 2018"
+output: html_document
+---
+
+
+## Analyse by layers
+
+
+```{r fig.height=10, fig.width=10}
+p1= TSNEPlot(PFC_excitatory_sobj, do.label = T, pt.size = 0.3,colors.use = generateColors(29),do.return=T, no.legend=T,label.size = 6)
+p2= FeaturePlot(PFC_excitatory_sobj,
+                features.plot = c("Calb1","Cux2","Etv1","Bcl11b", "Pcp4","Foxp2","Syt6"),
+                cols.use = c("grey80","red"),
+                max.cutoff = "q99" ,
+                pt.size = 0.3,
+                do.return = T)
+
+gridExtra::grid.arrange(p2$Calb1,p2$Cux2, p2$Etv1, p2$Bcl11b,p2$Pcp4,p2$Foxp2,p2$Syt6,p1, ncol=3)
+```
+
+
+```{r}
+
+exc_layer_mrks = c("Calb1","Cux2","Etv1","Bcl11b", "Pcp4","Foxp2","Syt6")
+
+for(mrk  in exc_layer_mrks){
+  fname = paste0("RAW/Exc_layer_marker_",mrk,".pdf")
+  pdf(fname,width = 5,height = 5)
+  FeaturePlot(PFC_excitatory_sobj,c(mrk),cols.use = c("grey80","#B71B1BFF"),max.cutoff = "q99",pt.size = 1,no.axes = T,min.cutoff = "q1")
+  dev.off()
+}
+```
+
+```{r fig.height=8, fig.width=12}
+MarkerViolonPlot(PFC_excitatory_sobj,
+                 features = c("Cux2","Rorb","Etv1"),
+                 cell.ident = PFC_excitatory_sobj@ident, 
+                 cols.use = generateColors(28),
+                 inGrid = T)
+```
+
+# Plot the percent of cells expressing each of the layer markers
+
+
+```{r}
+ae = RobustAverageDetection(PFC_excitatory_sobj)
+
+layer_mrks_dr = ae[c("Cux2","Rorb","Etv1","Syt6","Foxp2","Pou3f1","Calb1"),]
+
+
+layer_mrks_dr.mlt = reshape2::melt(layer_mrks_dr)
+colnames(layer_mrks_dr.mlt) = c("gene","cluster","Percent")
+
+layer_mrks_dr.mlt$cluster = factor(layer_mrks_dr.mlt$cluster,levels = 1:13)
+ggplot(layer_mrks_dr.mlt, aes(x=cluster,y=Percent)) + geom_bar(stat = "identity",position = position_dodge(),width=0.8) + facet_grid(gene~.) + theme_bw()
+```
+
+
+## Define layers 
+
+```{r}
+layers_ident <- as.character(PFC_excitatory_sobj@meta.data$L1_cluster)
+
+layers_ident = gsub("Exc_","",layers_ident)
+
+layers_ident[layers_ident %in% c(1:4)] = "eL2/3-1" # Calb1+ Cux2+
+layers_ident[layers_ident %in% c(6)] = "eL2/3-2" # Calb1- Cux2+
+
+layers_ident[layers_ident %in% c(10)] = "eL5-1" # Etv1+ Bcl11b+
+layers_ident[layers_ident %in% c(12)] = "eL5-2" # Etv1+ Bcl11b+
+layers_ident[layers_ident %in% c(8,11,7)] = "eL5-3" # Etv1+ Bcl11b-
+
+layers_ident[layers_ident %in% c(13)] = "eL6-1" # Syt6+ Foxp2+
+layers_ident[layers_ident %in% c(5,9)] = "eL6-2" # Etv1- Bcl11b- Pcp4+
+
+
+
+# layers_ident[layers_ident %in% c(3,4)] = "eL2/3"
+# layers_ident[layers_ident %in% c(25:27)] = "eL5-1"
+# layers_ident[layers_ident %in% c(7,10:13,18)] = "eL5-2"
+# layers_ident[layers_ident %in% c(1,6,8,9,19,28)] = "eL5-3"
+# layers_ident[layers_ident %in% c(3,4)] = "eL6-1"
+# layers_ident[layers_ident %in% c(2)] = "eL6-2"
+
+
+PFC_excitatory_sobj@meta.data$Layer = layers_ident
+
+p3=TSNEPlot(PFC_excitatory_sobj,
+         group.by="Layer",
+         colors.use = c("#F0788C","#4DBBD5","#524FA1","#00A087","#F39B7F","#FDB913","#BBBBBB"), #pal_npg()(10)[-c(4,7,8)],
+         pt.size = 0.7,
+         do.label = T,
+         label.size = 5,do.return=T,no.legend=T)
+
+
+gridExtra::grid.arrange(p1,p2$Calb1,p2$Cux2, p2$Etv1, p2$Bcl11b,p2$Pcp4,p2$Foxp2,p2$Syt6,p3, ncol=3)
+```
+
+
+# Get the layer markers
+
+```{r}
+PFC_excitatory_saline_sobj = SubsetData(PFC_excitatory_sobj,subset.name = "treatment",accept.value = "Saline")
+
+PFC_excitatory_saline_sobj = SetIdent(PFC_excitatory_saline_sobj,ident.use = PFC_excitatory_saline_sobj@meta.data$Layer)
+
+Layer_markers <- FindAllMarkers(PFC_excitatory_saline_sobj,only.pos = T,logfc.threshold = log(2))
+```
+
+# Find DEG in different phases of addiction
+
+```{r}
+require(SC2P)
+Excitatory_layer_DEG <- list()
+
+#PFC_excitatory_sobj@meta.data$tree.ident <- as.character(PFC_excitatory_sobj@ident)
+
+for(layer in sort(unique(PFC_excitatory_sobj@meta.data$Layer)) ){
+  Excitatory_layer_DEG[[layer]] <- list()
+  
+  for(period in unique(PFC_excitatory_sobj@meta.data$Period)){
+    message(paste("layer",layer,"period",period))
+    Excitatory_layer_DEG[[layer]][[period]] <- list()
+    
+    
+    tmp_sobj <- SubsetData(PFC_excitatory_sobj,subset.name = "Layer", accept.value = layer, subset.raw = T)
+    tmp_sobj <- SubsetData(tmp_sobj,subset.name = "Period", accept.value = period, subset.raw = T)
+  
+    
+    tmp_sobj = removeMitoandRiboGenes_raw(tmp_sobj)
+    
+    Y = as.matrix(tmp_sobj@raw.data)
+    qt = apply(Y, 2, quantile,0.99)
+    Y = Y[,qt>=10]
+    
+    design = tmp_sobj@meta.data[,c("nUMI","percent.mito","treatment")]
+    design$treatment = factor(design$treatment,levels = c("Saline","Cocaine"))
+    design$class = as.numeric(design$treatment)
+    design = design[colnames(Y),]
+    
+    if(min(table(design$treatment))>3){
+      
+      #tmp_sobj <- SetIdent(tmp_sobj,ident.use = tmp_sobj@meta.data$treatment)
+      #ae = AverageDetectionRate(tmp_sobj)[rownames(Y),]
+      #rm = apply(ae, 1, max)
+      #Y = Y[rm>=0.1,]
+      
+      phenoData <- new("AnnotatedDataFrame", data=design)
+      eset <- ExpressionSet(assayData=Y, phenoData=phenoData)
+      data <- eset2Phase(eset)
+      Excitatory_layer_DEG[[layer]][[period]] <- twoPhaseDE(data, design=c("treatment"), test.which=1, offset="sf")
+    }
+  }
+}
+
+rm(eset, design, data, Y, tmp_sobj)
+```
+
+
+
+# Get common DEG genes
+
+```{r}
+
+common_DEG_layer_phase <- list()
+
+
+for(period in names(Excitatory_layer_DEG[[1]])){
+  print(period)  
+  common_DEG_layer_phase[[period]] <- list()
+  
+  for(layer in names(Excitatory_layer_DEG)){
+    
+    if(is.data.frame(Excitatory_layer_DEG[[layer]][[period]])){
+    df  = topGene(Excitatory_layer_DEG[[layer]][[period]],phase = "both",
+                    number = 30000,p.value = 0.05)
+    
+    tmp <- subset(df, Phase2 == "Y")
+    if(class(common_DEG_layer_phase[[period]]) == 'list'){
+      common_DEG_layer_phase[[period]] = tmp$Gene.name
+    }else{
+      common_DEG_layer_phase[[period]] <- intersect(common_DEG_layer_phase[[period]],tmp$Gene.name)
+    }
+    }
+  }
+}
+
+nr = max(sapply(common_DEG_layer_phase, length))
+
+common_DEG_layer_phase.df <- matrix("",nrow = nr,ncol = length(common_DEG_layer_phase))
+colnames(common_DEG_layer_phase.df) <- names(common_DEG_layer_phase)
+
+for(period in names(common_DEG_layer_phase)){
+  if(length(common_DEG_layer_phase[[period]])>0){
+    common_DEG_layer_phase.df[,period] <- common_DEG_layer_phase[[period]]
+  }
+}
+
+write.csv(common_DEG_layer_phase.df, file="Excitatory_layer_common_DEG.csv",row.names = F)
+
+```
+
+
+# Write results 
+
+```{r}
+require(annotables)
+data(grcm38)
+
+dir.create("Excitatory",showWarnings = F)
+dir.create("Excitatory/Excitatory_layer_DEG_Cocaine/",showWarnings = F)
+
+for(layer in names(Excitatory_layer_DEG) ){
+  for(period in names(Excitatory_layer_DEG[[layer]])){
+    if(is.data.frame(Excitatory_layer_DEG[[layer]][[period]])){
+      lyr = gsub("/","_",layer)
+      fname = paste0("Excitatory/Excitatory_layer_DEG_Cocaine/Excitatory_",lyr,"_",period,".csv")
+      df  = topGene(Excitatory_layer_DEG[[layer]][[period]],phase = "both",
+                    number = 30000,p.value = 0.05)
+      
+      if(nrow(df)>0){
+        pos <- match(df$Gene.name, grcm38$symbol)
+        df$bioType = grcm38$biotype[pos]
+        df$Description = grcm38$description[pos]
+      }
+      
+      write.csv(df, file=fname)  
+    }
+  }
+}
+```
+
+
+# Count the number of DEG by layer
+
+```{r}
+nbDEG_bylayer <- list()
+
+
+for(layer in names(Excitatory_layer_DEG) ){
+  
+  nbDEG_bylayer[[layer]] = data.frame(period=names(Excitatory_layer_DEG[[layer]]),
+                                      nbDEG=0,
+                                      layer=layer)
+  rownames(nbDEG_bylayer[[layer]]) = names(Excitatory_layer_DEG[[layer]])
+
+  for(period in names(Excitatory_layer_DEG[[layer]])){
+    if(is.data.frame(Excitatory_layer_DEG[[layer]][[period]])){
+      df  = topGene(Excitatory_layer_DEG[[layer]][[period]],phase = "both",
+                    number = 30000,p.value = 0.05)
+      
+      if(nrow(df)>0){
+        df = subset(df,Phase2=="Y")
+        nbDEG_bylayer[[layer]][period,"nbDEG"]=  nrow(df)
+      }
+    }
+  }
+}
+
+nbDEG_bylayer <- do.call("rbind",nbDEG_bylayer)
+
+nbDEG_bylayer$layer = factor(nbDEG_bylayer$layer,levels = sort(unique(nbDEG_bylayer$layer),decreasing = T))
+
+nbDEG_bylayer$period <- factor(nbDEG_bylayer$period, levels = c("Maintenance","withdraw_48h","withdraw_15d"))
+
+ggplot(nbDEG_bylayer, aes(x=period,y=layer)) + geom_point(aes(size=nbDEG,color=nbDEG)) + theme_bw() + ggsci::scale_color_gsea()
+
+```
+
+

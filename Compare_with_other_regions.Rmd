@@ -1,0 +1,935 @@
+---
+title: "Compare with other Data-sets"
+author: "Mohamed Nadhir Djekidel"
+date: "October 16, 2018"
+output: html_document
+---
+
+
+# Load data 
+```{r}
+load("Excitatory/PFC_excitatory_sobj.RData")
+```
+
+## Visual cortex
+
+```{r}
+vc_expr <- read.csv("../../../Public/AllanBrain/mouse_VISp_gene_expression_matrices_2018-06-14/mouse_VISp_2018-06-14_exon-matrix.csv")
+rownames(vc_expr) <- vc_expr$X
+vc_expr$X=NULL
+vc_meta <- read.csv("../../../Public/AllanBrain/mouse_VISp_gene_expression_matrices_2018-06-14/mouse_VISp_2018-06-14_samples-columns.csv")
+rownames(vc_meta) <- vc_meta$sample_name
+
+vc_sobj <- CreateSeuratObject(raw.data = Matrix(data.matrix(vc_expr)),
+                              project = "Allen_VC",
+                              normalization.method = "LogNormalize",
+                              min.genes = 1500,
+                              min.cells = 3,
+                              scale.factor = 1e-6,
+                              meta.data = vc_meta)
+
+rs = rowSums(vc_sobj@data)
+vc_sobj@data =vc_sobj@data[rs>0,]
+
+vc_sobj <- ScaleData(vc_sobj,vars.to.regress = c("total_reads","percent_exon_reads","seq_batch","percent_mt_exon_reads","nUMI"))
+
+
+toUse <- rownames(subset(vc_sobj@meta.data, subclass %in% c("L2/3 IT", "L4","L5 IT","L5 PT","L6 CT","L6 IT","L6b")))
+
+vc_neurons_sobj <- SubsetData(vc_sobj, cells.use = toUse,subset.raw = T)
+vc_neurons_sobj
+```
+
+
+# Do CCA and compare with PFC
+
+
+```{r}
+PFC_excitatory_saline_sobj = ScaleData(PFC_excitatory_saline_sobj, vars.to.regress=c("nUMI","percent.mito","Sample"))
+
+toUse <-grep("ALM",vc_neurons_sobj@meta.data$cluster,invert=T)
+vc_neurons_sobj = SubsetData(vc_neurons_sobj,   cells.use = vc_neurons_sobj@cell.names[toUse], subset.raw=T)
+vc_neurons_sobj = NormalizeData(vc_neurons_sobj)
+vc_neurons_sobj = ScaleData(vc_neurons_sobj,vars.to.regress = c("total_reads","percent_mt_exon_reads","complexity_cg"))
+
+
+PFC_excitatory_saline_sobj@meta.data$DevStage = "mPFC"
+vc_neurons_sobj@meta.data$DevStage= "VISp"
+
+hvg.pfc <- rownames(x = head(x = PFC_excitatory_saline_sobj@hvg.info, n = 2000))
+hvg.vc <- rownames(x = head(x = vc_neurons_sobj@hvg.info, n = 2000))
+hvg.union <- union(hvg.pfc, hvg.vc)
+
+
+
+mPFC_VISp_cca_sobj <- RunCCA(PFC_excitatory_saline_sobj, vc_neurons_sobj,genes.use = hvg.union)
+DimHeatmap(mPFC_VISp_cca_sobj,dim.use = 1:20,reduction.type = "cca",do.balanced = T,cells.use = 500)
+
+mPFC_VISp_cca_sobj = AlignSubspace(mPFC_VISp_cca_sobj,
+                                   reduction.type = "cca",
+                                   grouping.var = "DevStage",
+                                   dims.align = 1:20)
+
+p_PFC = MetageneBicorPlot(mPFC_VISp_cca_sobj, grouping.var = "DevStage", 
+                          dims.eval = 1:20, display.progress = TRUE,return.mat = T)
+tmp =p_PFC %>% filter(bicor >= 0.15)
+toUse = as.numeric( names(table(tmp$cc))[table(tmp$cc)==2])
+toUse
+
+
+mPFC_VISp_cca_sobj@meta.data$L2_clusters  = as.character(mPFC_VISp_cca_sobj@meta.data$L2_clusters)
+
+pos <- which(is.na(mPFC_VISp_cca_sobj@meta.data$L2_clusters))
+mPFC_VISp_cca_sobj@meta.data$L2_clusters[pos] = as.character(mPFC_VISp_cca_sobj@meta.data$subclass[pos])
+
+
+system.time( celltype_PFC_VC_L1 <- MetaNeighborUS_CCA(dat = t(mPFC_VISp_cca_sobj@dr$cca.aligned@cell.embeddings),
+                            study_id = mPFC_VISp_cca_sobj@meta.data$DevStage,
+                            cell_type = mPFC_VISp_cca_sobj@meta.data$L2_clusters)
+            )
+
+
+tmp = as.matrix(t(mPFC_VISp_cca_sobj@dr$cca.aligned@cell.embeddings))
+
+
+top_hits = topHits.my(cell_NV = celltype_PFC_VC_L1,
+dat = tmp,
+study_id =  mPFC_VISp_cca_sobj@meta.data$DevStage,
+cell_type =  mPFC_VISp_cca_sobj@meta.data$L2_clusters,
+threshold = 0.7)
+
+```
+
+
+Plot results
+
+```{r}
+load("../Compate_with_VC/celltype_PFC_VC_L1.RData")
+load("../Compate_with_VC/top_hits_0.7.RData")
+
+  
+
+top_hits_0.7 = top_hits_0.8
+lbls = celltype_PFC_VC_L1*0
+
+colnames(top_hits_0.7)[4] ="Match_type"
+
+for(i in 1:nrow(top_hits_0.7)){
+  
+  if(top_hits_0.7$Match_type[i] == "Reciprocal_top_hit"){
+      c1 = as.character(top_hits_0.7$`Study_ID|Celltype_1`[i])
+      c2 = as.character(top_hits_0.7$`Study_ID|Celltype_2`[i])
+      
+      lbls[c1,c2] = "*"
+      lbls[c2,c1] = "*"
+    
+  }else{
+    c1 = as.character(top_hits_0.7$`Study_ID|Celltype_1`[i])
+    c2 = as.character(top_hits_0.7$`Study_ID|Celltype_2`[i])
+    #lbls[c1,c2] = "+"
+  }
+}
+lbls[lbls==0] = ""
+
+
+
+ph= pheatmap(celltype_PFC_VC_L1,clustering_method = "average",display_numbers = lbls,number_color = "black",fontsize_number = 12)
+
+
+
+
+
+tmp = circlize::colorRamp2(c(0, 0.5, 0.7,1), c("grey80", "royalblue", "yellow","red"))
+
+
+paletteLength <- 50
+myColor <- colorRampPalette(c("#F9F9F9FF", "royalblue","#B71B1BFF"))(paletteLength)
+# length(breaks) == length(paletteLength) + 1
+# use floor and ceiling to deal with even/odd length pallettelengths
+myBreaks <- c(seq(min(celltype_PFC_VC_L1-0.9), 0, length.out=ceiling(paletteLength/2) + 1), 
+              seq(max(celltype_PFC_VC_L1-0.9)/paletteLength, max(celltype_PFC_VC_L1-0.9), length.out=floor(paletteLength/2)))
+
+
+
+
+gaps= c(7,15,19,21,22,24,27,30,34,37,41,45,46,50,51)
+
+tmp = celltype_PFC_VC_L1[ph$tree_row$order,ph$tree_col$order]-0.9
+tmp[lower.tri(tmp)] = NA
+
+pheatmap(tmp,cluster_cols = F,cluster_rows = F,
+         gaps_col = gaps,
+         gaps_row = gaps,
+         show_colnames = T,
+         display_numbers = lbls[ph$tree_row$order,ph$tree_col$order],
+         number_color = "black",
+         fontsize_number = 12,
+         color = myColor,
+         breaks = myBreaks)
+
+
+
+```
+
+
+## ALM  (Anterior Lateral Motor Area)
+
+```{r}
+ALM_expr <- read.csv("../../../Public/AllanBrain/mouse_ALM_gene_expression_matrices_2018-06-14/mouse_ALM_2018-06-14_exon-matrix.csv")
+rownames(ALM_expr) <- ALM_expr$X
+ALM_expr$X=NULL
+
+ALM_meta <- read.csv("../../../Public/AllanBrain/mouse_ALM_gene_expression_matrices_2018-06-14/mouse_ALM_2018-06-14_samples-columns.csv")
+
+rownames(ALM_meta) <- ALM_meta$sample_name
+ALM_meta$sample_name = NULL
+
+ALM_sobj <- CreateSeuratObject(raw.data = Matrix(data.matrix(ALM_expr)),
+                              project = "Allen_ALM",
+                              normalization.method = "LogNormalize",
+                              min.genes = 1000,
+                              min.cells = 3,
+                              scale.factor = 1e-6,
+                              meta.data = ALM_meta)
+
+ALM_neuron_sobj = SubsetData(ALM_sobj,subset.name ="class",accept.value = "Glutamatergic",subset.raw = T)
+```
+
+
+# Save results
+```{r}
+dir.create("AllenBrain_objects",showWarnings = F)
+
+save(vc_neurons_sobj, file="AllenBrain_objects/vc_neurons_sobj.RData")
+save(ALM_neuron_sobj, file="AllenBrain_objects/ALM_neuron_sobj.RData")
+
+gnames <- read.csv("../../../Public/AllanBrain/mouse_ALM_gene_expression_matrices_2018-06-14/mouse_ALM_2018-06-14_genes-rows.csv")
+```
+
+```{r}
+ALM_neuron_sobj = NormalizeData(ALM_neuron_sobj, scale.factor=1e6)
+
+ALM_neuron_sobj <- ScaleData(ALM_neuron_sobj,
+                             vars.to.regress = c("total_reads","percent_exon_reads","seq_batch","percent_mt_exon_reads"),
+                             do.scale = TRUE,
+                             do.center = TRUE)
+
+
+pos <- match(rownames(ALM_neuron_sobj@scale.data), gnames$gene_entrez_id)
+rownames(ALM_neuron_sobj@scale.data) = gnames$gene_symbol[pos]
+
+
+pos <- match(rownames(ALM_neuron_sobj@data), gnames$gene_entrez_id)
+rownames(ALM_neuron_sobj@data) = gnames$gene_symbol[pos]
+
+pos <- match(rownames(ALM_neuron_sobj@raw.data), gnames$gene_entrez_id)
+rownames(ALM_neuron_sobj@raw.data) = gnames$gene_symbol[pos]
+
+
+# remove chromosome MT genes
+chomM_genes <-  as.character(subset(gnames, chromosome == "MT")$gene_symbol)
+ALM_neuron_sobj@scale.data = ALM_neuron_sobj@scale.data[! rownames(ALM_neuron_sobj@scale.data) %in%  chomM_genes, ]
+ALM_neuron_sobj@scale.data = ALM_neuron_sobj@scale.data[grep("Gm",rownames(ALM_neuron_sobj@scale.data), invert=TRUE),]
+
+ALM_neuron_sobj@data = ALM_neuron_sobj@data[! rownames(ALM_neuron_sobj@data) %in%  chomM_genes, ]
+ALM_neuron_sobj@data = ALM_neuron_sobj@data[grep("Gm",rownames(ALM_neuron_sobj@data), invert=TRUE),]
+
+
+ALM_neuron_sobj= FindVariableGenes(ALM_neuron_sobj,y.cutoff = 1.5)
+
+```
+
+```{r}
+vc_neurons_sobj = NormalizeData(vc_neurons_sobj, scale.factor=1e6)
+
+vc_neurons_sobj <- ScaleData(vc_neurons_sobj,
+                             vars.to.regress = c("total_reads","percent_exon_reads","seq_batch","percent_mt_exon_reads"),
+                             do.scale = TRUE,
+                             do.center = TRUE)
+
+
+# pos <- match(rownames(vc_neurons_sobj@scale.data), gnames$gene_entrez_id)
+# rownames(vc_neurons_sobj@scale.data) = gnames$gene_symbol[pos]
+# 
+# 
+# pos <- match(rownames(vc_neurons_sobj@data), gnames$gene_entrez_id)
+# rownames(vc_neurons_sobj@data) = gnames$gene_symbol[pos]
+
+# remove chromosome MT genes
+chomM_genes <-  as.character(subset(gnames, chromosome == "MT")$gene_symbol)
+vc_neurons_sobj@scale.data = vc_neurons_sobj@scale.data[! rownames(vc_neurons_sobj@scale.data) %in%  chomM_genes, ]
+vc_neurons_sobj@scale.data = vc_neurons_sobj@scale.data[grep("Gm",rownames(vc_neurons_sobj@scale.data), invert=TRUE),]
+
+vc_neurons_sobj@data = vc_neurons_sobj@data[! rownames(vc_neurons_sobj@data) %in%  chomM_genes, ]
+vc_neurons_sobj@data = vc_neurons_sobj@data[grep("Gm",rownames(vc_neurons_sobj@data), invert=TRUE),]
+
+vc_neurons_sobj@raw.data = vc_neurons_sobj@raw.data[rownames(vc_neurons_sobj@data), colnames(vc_neurons_sobj@data)]
+
+
+vc_neurons_sobj= FindVariableGenes(vc_neurons_sobj,y.cutoff = 1.5)
+
+```
+
+
+```{r}
+PFC_excitatory_sobj <- FindVariableGenes(PFC_excitatory_sobj,y.cutoff = 1.5)
+
+common_varaible <-PFC_excitatory_sobj@var.genes
+common_varaible <- intersect(common_varaible, vc_neurons_sobj@var.genes)
+common_varaible <- intersect(common_varaible, ALM_neuron_sobj@var.genes)
+length(common_varaible)
+```
+
+
+# Find the markers of the different datasets
+
+```{r}
+load("Excitatory/PFC_excitatory_sobj.RData")
+load("Excitatory/mrks_26clus.RData")
+load("AllenBrain_objects/alm_markers.RData")
+load("AllenBrain_objects/vc_markers.RData")
+
+
+pos <- match(vc_markers$gene, gnames$gene_entrez_id)
+vc_markers$gene_name = gnames$gene_symbol[pos]
+
+PFC_excitatory_saline_sobj = SubsetData(PFC_excitatory_sobj, 
+                                        subset.raw=T,
+                                        subset.name="treatment",
+                                        accept.value="Saline")
+
+PFC_excitatory_saline_sobj = ScaleData(PFC_excitatory_saline_sobj,
+                                       vars.to.regress=c("nUMI","percent.mito","Sample"),
+                                       do.scale=T,
+                                       do.center=T)
+markers <- list()
+#markers[[1]] <- FindAllMarkers(PFC_excitatory_sobj,test.use = "bimod")
+#markers[[2]] <- FindAllMarkers(vc_neurons_sobj,test.use = "bimod")
+#markers[[3]] <- FindAllMarkers(ALM_neuron_sobj,test.use = "bimod")
+
+mrks_26clus$gene_name = mrks_26clus$gene # just to have the same column names
+markers[["PFC"]] <- mrks_26clus
+markers[["VC"]] <- vc_markers
+markers[["ALM"]] <- alm_markers
+
+sig_markers <- lapply(markers, function(x){
+  subset(x, p_val_adj < 1e-3 & avg_logFC > log(2) )
+})
+
+sapply(sig_markers, nrow)
+```
+
+
+# Get common markers
+
+```{r}
+common_markers <- c()
+
+for(i in 1:length(sig_markers)){
+  if(i==1){
+    common_markers = sig_markers[[1]]$gene_name
+  }else{
+    common_markers = intersect(common_markers,sig_markers[[i]]$gene_name)
+  }
+}
+length(common_markers)
+```
+
+# Calculate the correlation with the visual corext
+
+```{r}
+vc_neurons_sobj <- SetIdent(vc_neurons_sobj, ident.use = vc_neurons_sobj@meta.data$cluster)
+
+ae_vc_layer = AverageExpression(vc_neurons_sobj,use.scale = F)
+ae_vc_layer = log2(ae_vc_layer+1)
+
+pos = match(rownames(ae_vc_layer), gnames$gene_entrez_id)
+rownames(ae_vc_layer) = gnames$gene_symbol[pos]
+
+PFC_excitatory_sobj <- SetIdent(PFC_excitatory_sobj,ident.use = PFC_excitatory_sobj@meta.data$L2_clusters)
+
+ae_pfc_layer = AverageExpression(PFC_excitatory_sobj, use.scale=F)
+ae_pfc_layer = log2(ae_pfc_layer+1)
+
+cor_pfc_vc <- matrix(0, nrow=ncol(ae_pfc_layer), ncol=ncol(ae_vc_layer))
+rownames(cor_pfc_vc) <- colnames(ae_pfc_layer)
+colnames(cor_pfc_vc) <- colnames(ae_vc_layer)
+
+
+#common_varaible <- c(common_varaible,"Cux2","Etv1","Calb1","Pcp4","Bcl11b","Foxp2")
+#common_varaible = unique(common_varaible)
+common_varaible = intersect(sig_markers$PFC$gene_name, sig_markers$VC$gene_name)
+
+#common_varaible = c("Cux2","Etv1","Calb1","Pcp4","Bcl11b","Foxp2")
+
+for(cls1 in colnames(ae_pfc_layer)){
+  for(cls2 in colnames(ae_vc_layer)){
+    cor_pfc_vc[cls1,cls2] <- cor(ae_pfc_layer[common_varaible,cls1], ae_vc_layer[common_varaible, cls2])
+  }
+}
+
+
+pheatmap(t(cor_pfc_vc), display_numbers = T,number_color = "black",clustering_method = "ward.D")
+```
+
+
+# Use metNeighbour to compare data
+
+## Compare with Visual Cortex
+
+```{r}
+
+load("PFC_excitatory_sobj.RData")
+load("Compate_with_VC/vc_neurons_sobj.RData")
+
+PFC_excitatory_saline_sobj = SubsetData(PFC_excitatory_sobj, subset.name="treatment",accept.value="Saline",subset.raw=T)
+PFC_excitatory_saline_sobj = NormalizeData(PFC_excitatory_saline_sobj)
+
+
+gene_names = read.csv("mouse_ALM_2018-06-14_genes-rows.csv")
+
+gene_names$gene_entrez_id = as.character(gene_names$gene_entrez_id)
+pos <- match(rownames(vc_neurons_sobj@raw.data), gene_names$gene_entrez_id )
+rownames(vc_neurons_sobj@raw.data) = gene_names$gene_symbol[pos]
+
+vc_neurons_sobj = NormalizeData(vc_neurons_sobj)
+
+
+PFC_excitatory_saline_sobj = FindVariableGenes(PFC_excitatory_saline_sobj)
+vc_neurons_sobj = FindVariableGenes(vc_neurons_sobj)
+
+PFC_excitatory_saline_sobj@meta.data$Source ="mPFC"
+vc_neurons_sobj@meta.data$Source = "VisualCortex"
+
+
+# Set clusters (fine scale clusters)
+PFC_excitatory_saline_sobj@meta.data$Clusters_L2 = PFC_excitatory_saline_sobj@ident
+vc_neurons_sobj@meta.data$Clusters_L2 = as.character(vc_neurons_sobj@meta.data$cluster)
+
+
+# Set clusters (Boad scale clusters)
+PFC_excitatory_saline_sobj@meta.data$Clusters_L1 = as.character(PFC_excitatory_saline_sobj@meta.data$L1_cluster)
+vc_neurons_sobj@meta.data$Clusters_L1 = as.character(vc_neurons_sobj@meta.data$subclass)
+
+# Compare with layers
+
+PFC_excitatory_saline_sobj@meta.data$Clusters_L3 = PFC_excitatory_saline_sobj@ident
+vc_neurons_sobj@meta.data$Clusters_L3 = as.character(vc_neurons_sobj@meta.data$subclass)
+
+
+# Merge Objects
+PFC_excitatory_visualCortex_sobj <- MergeSeurat(PFC_excitatory_saline_sobj,vc_neurons_sobj)
+
+
+PFC_excitatory_visualCortex_sobj@meta.data$Clusters_L3 = PFC_excitatory_visualCortex_sobj@meta.data$Clusters_L1
+pos <- which(PFC_excitatory_visualCortex_sobj@meta.data$Source == "mPFC")
+PFC_excitatory_visualCortex_sobj@meta.data$Clusters_L3[pos] = PFC_excitatory_visualCortex_sobj@meta.data$Clusters_L2[pos]
+
+
+var_genes = unique(c(PFC_excitatory_saline_sobj@var.genes, vc_neurons_sobj@var.genes))
+
+#se = SummarizedExperiment(assays = list(counts = as.matrix(PFC_excitatory_visualCortex_sobj@data[var_genes,])))
+
+exprs =  as.matrix(PFC_excitatory_visualCortex_sobj@data[var_genes,])
+
+system.time( celltype_PFC_VC_L2 <- MetaNeighborUS_parallel(var_genes = var_genes,
+							dat = exprs,
+							study_id = PFC_excitatory_visualCortex_sobj@meta.data$Source,
+							cell_type = PFC_excitatory_visualCortex_sobj@meta.data$Clusters_L2)
+            )
+
+save(celltype_PFC_VC_L2,file="celltype_PFC_VC_L2.RData")
+
+system.time( celltype_PFC_VC_L1 <- MetaNeighborUS_parallel(var_genes = var_genes,
+                            dat = exprs,
+                            study_id = PFC_excitatory_visualCortex_sobj@meta.data$Source,
+                            cell_type = PFC_excitatory_visualCortex_sobj@meta.data$Clusters_L1)
+            )
+
+
+system.time( celltype_PFC_VC_L3 <- MetaNeighborUS_parallel(var_genes = var_genes,
+                            dat = exprs,
+                            study_id = PFC_excitatory_visualCortex_sobj@meta.data$Source,
+                            cell_type = PFC_excitatory_visualCortex_sobj@meta.data$Clusters_L3)
+            )
+
+
+
+
+
+save(celltype_PFC_VC_L1,file="celltype_PFC_VC_L1.RData")
+
+
+```
+
+
+# Differential expression between the different similar groups in VISp
+
+```{r}
+require(scran)
+# Do differential gene expression
+dir.create("Compate_with_VC/DEG_by_Group",showWarnings = F)
+load("FinalObjects/vc_groups.RData")
+#vc_neurons_sobj = NormalizeData(vc_neurons_sobj)
+
+PFC_VC_DEG <- list()
+
+
+#hcols = viridis::plasma(20)
+hcols=   colorRampPalette(rev(brewer.pal(n = 11, name ="RdBu")))(12)
+
+for(grp in 1:length(vc_groups)){
+	message(paste("***",grp,"***"))
+	mPFC_clus = vc_groups[[grp]]$PFC
+	visp_clus = vc_groups[[grp]]$VISp
+
+	if(length(mPFC_clus)>0 & length(visp_clus)>0){
+
+		pos1 = rownames(subset(PFC_excitatory_saline_sobj@meta.data, L2_clusters %in% mPFC_clus))
+		pos2 = rownames(subset(vc_neurons_sobj@meta.data, cluster %in% visp_clus))
+
+		sobj1 = SubsetData(PFC_excitatory_saline_sobj,cells.use = pos1, subset.raw=T)
+		sobj2 = SubsetData(vc_neurons_sobj,cells.use = pos2, subset.raw=T)
+
+		common_genes = intersect(rownames(sobj1@data), rownames(sobj2@data))
+
+		sce1 = Convert(sobj1, to="sce")
+		sce2 = Convert(sobj2, to="sce")
+
+		sce1 = sce1[common_genes,]
+		sce2 = sce2[common_genes,]
+		out = scran::multiBatchNorm(sce1, sce2)
+		rm(sce1,sce2)
+		sobj_mrg = MergeSeurat(sobj1, sobj2, do.normalize = T,do.scale = F)
+		rm(sobj1,sobj2)
+		sobj_mrg@data = cbind(assay(out[[1]],2),assay(out[[2]],2))
+
+		newIdent = c(rep("mPFC",length(pos1)), rep("VISp",length(pos2)))
+		sobj_mrg = SetIdent(sobj_mrg, ident.use = newIdent)
+		sobj_mrg = ScaleData(sobj_mrg)
+
+		PFC_VC_DEG[[grp]] = FindMarkers(sobj_mrg,test.use = "bimod",ident.1 = "mPFC")
+		
+		
+		# Plot the results
+		fname = paste0("Compate_with_VC/DEG_by_Group/group_",grp,"_DEG.pdf")
+		
+		
+		de_sig = subset(PFC_VC_DEG[[grp]], abs(pct.1-pct.2)/max(pct.1,pct.2) > 0.3 & p_val_adj < 1e-5 & abs(avg_logFC) > log(2) )
+		
+		de_sig = de_sig[order(de_sig$avg_logFC,decreasing = T),]
+		
+		
+		tmp = sobj_mrg@scale.data[rownames(de_sig),]
+		q99 = quantile(tmp,0.99)
+		q1 = quantile(tmp,0.01)
+		
+		tmp = Seurat:::MinMax(tmp,min = -2,max = 2)
+		tmp = as.matrix(tmp)
+		pdf(fname,width = 2,height = 9)
+		deDirect = ifelse(de_sig$avg_logFC>0,"1","2")
+		h=Heatmap(tmp,show_row_names = F,show_column_names = F,show_column_dend = F,show_row_dend = F,cluster_rows = F,
+		          col = hcols, #PurpleAndYellow(), 
+		          name="expression",split = deDirect)
+		draw(h)
+		dev.off()
+		
+	}	
+}
+
+save(PFC_VC_DEG,file = "Compate_with_VC/PFC_VC_DEG.RData")
+```
+
+
+# 
+
+```{r}
+
+PFC_VC_DEG_sig = list()
+
+for(grp in 1:length(vc_groups)){
+	message(paste("***",grp,"***"))
+	mPFC_clus = vc_groups[[grp]]$PFC
+	visp_clus = vc_groups[[grp]]$VISp
+
+	if(length(mPFC_clus)>0 & length(visp_clus)>0){
+	  
+    PFC_VC_DEG_sig[[grp]] = subset(PFC_VC_DEG[[grp]], abs(pct.1-pct.2)/max(pct.1,pct.2) > 0.2 & p_val_adj < 1e-5 & abs(avg_logFC) > log(2) )
+		
+		PFC_VC_DEG_sig[[grp]] = PFC_VC_DEG_sig[[grp]][order(PFC_VC_DEG_sig[[grp]]$avg_logFC,decreasing = T),]
+	  
+		PFC_VC_DEG_sig[[grp]]$direction = ifelse(PFC_VC_DEG_sig[[grp]]$avg_logFC>0,"Up","Down")
+		
+		fname = paste0("Compate_with_VC/DEG_by_Group/PFC_VC_DEG_group",grp,".xlsx")
+		write.xlsx(PFC_VC_DEG_sig[[grp]],file = fname)
+		#write.csv(PFC_VC_DEG_sig[[grp]],file = fname)
+	}
+}
+
+#sapply(PFC_VC_DEG_sig, function(x) (27.5 *table(x$direction))/125 )
+
+```
+
+```{r}
+require(readxl)
+PFC_VC_DEG_sig = list()
+
+nb_DEG_vc = data.frame()
+for(grp in 1:length(vc_groups)){
+  fname = paste0("Compate_with_VC/DEG_by_Group/PFC_VC_DEG_group",grp,".xlsx")
+  if(file.exists(fname)){
+    PFC_VC_DEG_sig[[grp]] = read_xlsx(fname)
+    df = data.frame(group = grp, nbDEG = nrow(PFC_VC_DEG_sig[[grp]]))
+    nb_DEG_vc = rbind(nb_DEG_vc,df)
+  }
+}
+
+nb_DEG_vc
+
+```
+
+# Differential gene expression for ALM
+
+```{r}
+load("Compare_with_ALM/ALM_neuron_sobj.RData")
+load("FinalObjects/alm_groups.RData")
+
+ALM_neuron_sobj@meta.data$Clusters_L2 = as.character(ALM_neuron_sobj@meta.data$cluster)
+
+
+#ALM_neuron_sobj = NormalizeData(ALM_neuron_sobj)
+PFC_ALM_DEG <- list()
+
+dir.create("Compare_with_ALM/DEG_by_Group",showWarnings = F)
+
+
+#hcols =  colorRampPalette(rev(brewer.pal(n = 7, name ="RdYlBu")))(50)
+hcols = colorRampPalette(rev(brewer.pal(n = 11, name ="RdBu")))(12)
+
+for(grp in 1:length(alm_groups)){
+	message(paste("***",grp,"***"))
+	mPFC_clus = alm_groups[[grp]]$PFC
+	ALM_clus = alm_groups[[grp]]$ALM
+
+	if(length(mPFC_clus)>0 & length(ALM_clus)>0){
+
+		pos1 = rownames(subset(PFC_excitatory_saline_sobj@meta.data, L2_clusters %in% mPFC_clus))
+		pos2 = rownames(subset(ALM_neuron_sobj@meta.data, cluster %in% ALM_clus))
+
+		sobj1 = SubsetData(PFC_excitatory_saline_sobj,cells.use = pos1, subset.raw=T)
+		sobj2 = SubsetData(ALM_neuron_sobj,cells.use = pos2, subset.raw=T)
+
+		common_genes = intersect(rownames(sobj1@data), rownames(sobj2@data))
+
+		sce1 = Convert(sobj1, to="sce")
+		sce2 = Convert(sobj2, to="sce")
+
+		sce1 = sce1[common_genes,]
+		sce2 = sce2[common_genes,]
+		out = multiBatchNorm(sce1, sce2)
+		rm(sce1,sce2)
+		sobj_mrg = MergeSeurat(sobj1, sobj2, do.normalize = T,do.scale = T)
+		rm(sobj1,sobj2)
+		sobj_mrg@data = cbind(assay(out[[1]],2),assay(out[[2]],2))
+    sobj_mrg = ScaleData(sobj_mrg)
+		newIdent = c(rep("mPFC",length(pos1)), rep("ALM",length(pos2)))
+		sobj_mrg = SetIdent(sobj_mrg, ident.use = newIdent)
+    
+		PFC_ALM_DEG[[grp]] = FindMarkers(sobj_mrg,test.use = "bimod",ident.1 = "mPFC")
+
+
+		fname = paste0("Compare_with_ALM/DEG_by_Group/group_",grp,"_DEG.pdf")
+		
+		
+		de_sig = subset(PFC_ALM_DEG[[grp]], abs(pct.1-pct.2)/max(pct.1,pct.2) > 0.3 & p_val_adj < 1e-5 & abs(avg_logFC) > log(2) )
+		
+		de_sig = de_sig[order(de_sig$avg_logFC,decreasing = T),]
+		
+		tmp = sobj_mrg@scale.data[rownames(de_sig),]
+		q99 = quantile(tmp,0.98)
+		q1 = quantile(tmp,0.01)
+		
+		tmp = Seurat:::MinMax(tmp,min = -2,max = 2)
+		tmp = as.matrix(tmp)
+		deDirect = ifelse(de_sig$avg_logFC>0,"1","2")
+		
+		# pdf(fname,width = 3,height = 9)
+		# h=Heatmap(tmp,show_row_names = F,show_column_names = F,show_column_dend = F,show_row_dend = F,cluster_rows = F,
+		#           col = hcols, #PurpleAndYellow(), 
+		#           name="expression",split = deDirect)
+		# draw(h)
+		# dev.off()
+
+	}	
+}
+
+save(PFC_ALM_DEG,file = "Compare_with_ALM/PFC_ALM_DEG.RData")
+```
+
+
+
+```{r}
+require(xlsx)
+
+PFC_ALM_DEG_sig = list()
+
+for(grp in 1:length(alm_groups)){
+	message(paste("***",grp,"***"))
+	mPFC_clus = alm_groups[[grp]]$PFC
+	ALM_clus = alm_groups[[grp]]$ALM
+	
+	
+	if(length(mPFC_clus)>0 & length(ALM_clus)>0){
+	  
+    PFC_ALM_DEG_sig[[grp]] = subset(PFC_ALM_DEG[[grp]], abs(pct.1-pct.2)/max(pct.1,pct.2) > 0.2 & p_val_adj < 1e-5 & abs(avg_logFC) > log(2) )
+		
+		PFC_ALM_DEG_sig[[grp]] = PFC_ALM_DEG_sig[[grp]][order(PFC_ALM_DEG_sig[[grp]]$avg_logFC,decreasing = T),]
+	  
+		PFC_ALM_DEG_sig[[grp]]$direction = ifelse(PFC_ALM_DEG_sig[[grp]]$avg_logFC>0,"Up","Down")
+		
+		fname = paste0("Compare_with_ALM/DEG_by_Group/PFC_ALM_DEG_group",grp,".xlsx")
+		write.xlsx(PFC_ALM_DEG_sig[[grp]],file = fname)
+	}
+}
+
+sapply(PFC_ALM_DEG_sig, function(x) table(x$direction))
+
+sapply(PFC_ALM_DEG_sig, function(x) (27.5 *table(x$direction))/149 )
+
+```
+
+
+
+```{r}
+PFC_ALM_DEG_sig = list()
+
+nb_DEG_ALM = data.frame()
+for(grp in 1:length(alm_groups)){
+  fname = paste0("Compare_with_ALM/DEG_by_Group/PFC_ALM_DEG_group",grp,".xlsx")
+  if(file.exists(fname)){
+    PFC_ALM_DEG_sig[[grp]] = read_xlsx(fname)
+    df = data.frame(group = grp, nbDEG = nrow(PFC_ALM_DEG_sig[[grp]]))
+    nb_DEG_ALM = rbind(nb_DEG_ALM,df)
+  }
+}
+
+write.csv(nb_DEG_ALM,"Compare_with_ALM/DEG_by_Group/nbDEG_ALM.csv",row.names = T)
+
+nb_DEG_ALM
+
+```
+
+## Count the number of DEG between the mPFC and ALM and VC
+
+```{r}
+
+PFC_VC_nbDEG <- data.frame()
+for(grp in 1:length(PFC_VC_DEG)){
+  
+  if(!is.null(PFC_VC_DEG[[grp]])){
+    de_sig = subset(PFC_VC_DEG[[grp]], abs(pct.1-pct.2)/max(pct.1,pct.2) > 0.2 & p_val_adj < 1e-5 & abs(avg_logFC) > log(2) )
+    nbUp = sum(de_sig$avg_logFC>0)
+    nbDown = sum(de_sig$avg_logFC<0)
+    #df = data.frame(group = grp, nbUp =nbUp, nbDown=nbDown)
+    df = data.frame(group=grp, direction = c("Up","Down"), nbDEG=c(nbUp,nbDown))
+    PFC_VC_nbDEG = rbind(PFC_VC_nbDEG, df) 
+  }
+}
+
+
+PFC_VC_nbDEG$group = factor(PFC_VC_nbDEG$group,1:16)
+
+ggplot(PFC_VC_nbDEG, aes(x=group,y=nbDEG, fill=direction)) + geom_bar(stat = "identity",position = position_dodge(),color="black") + ggsci::scale_fill_aaas() + theme_bw() 
+```
+
+
+```{r}
+PFC_ALM_nbDEG <- data.frame()
+for(grp in 1:length(PFC_ALM_DEG)){
+  
+  if(!is.null(PFC_ALM_DEG[[grp]])){
+  de_sig = subset(PFC_ALM_DEG[[grp]], abs(pct.1-pct.2)/max(pct.1,pct.2) > 0.2 & p_val_adj < 1e-5 & abs(avg_logFC) > log(2) )
+  
+  nbUp = sum(de_sig$avg_logFC>0)
+  nbDown = sum(de_sig$avg_logFC<0)
+  
+  #df = data.frame(group = grp, nbUp =nbUp, nbDown=nbDown)
+  df = data.frame(group=grp, direction = c("Up","Down"), nbDEG=c(nbUp,nbDown))
+  PFC_ALM_nbDEG = rbind(PFC_ALM_nbDEG, df)
+  }
+}
+
+
+PFC_ALM_nbDEG$group = factor(PFC_ALM_nbDEG$group,1:length(PFC_ALM_DEG))
+
+ggplot(PFC_ALM_nbDEG, aes(x=group,y=nbDEG, fill=direction)) + geom_bar(stat = "identity",position = position_dodge(),color="black") + ggsci::scale_fill_aaas() + theme_bw() 
+
+
+
+```
+
+
+
+# Find Markers specific to PFC specific clusters
+
+
+```{r}
+Clus7_14_ALM_DEG <- list()
+Clus7_14_ALM_DEG_sig <- list()
+
+for(grp in 1:length(alm_groups)){
+	message(paste("***",grp,"***"))
+	mPFC_clus = alm_groups[[grp]]$PFC
+	ALM_clus = "CR Lhx5" 
+
+	if(length(mPFC_clus)>0 & length(ALM_clus)>0){
+
+		pos1 = rownames(subset(PFC_excitatory_saline_sobj@meta.data, L2_clusters %in% mPFC_clus))
+		pos2 = rownames(subset(ALM_neuron_sobj@meta.data, cluster %in% ALM_clus))
+
+		sobj1 = SubsetData(PFC_excitatory_saline_sobj,cells.use = pos1, subset.raw=T)
+		sobj2 = SubsetData(ALM_neuron_sobj,cells.use = pos2, subset.raw=T)
+
+		common_genes = intersect(rownames(sobj1@data), rownames(sobj2@data))
+
+		sce1 = Convert(sobj1, to="sce")
+		sce2 = Convert(sobj2, to="sce")
+
+		sce1 = sce1[common_genes,]
+		sce2 = sce2[common_genes,]
+		out = multiBatchNorm(sce1, sce2)
+		rm(sce1,sce2)
+		sobj_mrg = MergeSeurat(sobj1, sobj2, do.normalize = T,do.scale = T)
+		rm(sobj1,sobj2)
+		sobj_mrg@data = cbind(assay(out[[1]],2),assay(out[[2]],2))
+    sobj_mrg = ScaleData(sobj_mrg)
+		newIdent = c(rep("mPFC",length(pos1)), rep("ALM",length(pos2)))
+		sobj_mrg = SetIdent(sobj_mrg, ident.use = newIdent)
+    
+		Clus7_14_ALM_DEG[[grp]] = FindMarkers(sobj_mrg,test.use = "bimod",ident.1 = "mPFC")
+
+
+		
+		
+		de_sig = subset(Clus7_14_ALM_DEG[[grp]], abs(pct.1-pct.2)/max(pct.1,pct.2) > 0.3 & p_val_adj < 1e-5 & abs(avg_logFC) > log(2) )
+		
+		de_sig = de_sig[order(de_sig$avg_logFC,decreasing = T),]
+
+		Clus7_14_ALM_DEG_sig[[grp]] = de_sig			
+	}	
+}
+
+
+```
+
+
+# Get genes always UP
+
+```{r}
+
+always_up <- NULL
+
+for(i in 1:length(Clus7_14_ALM_DEG)){
+  
+  
+  if(!is.null(Clus7_14_ALM_DEG[[i]])){
+    
+    up_genes <- rownames(subset(Clus7_14_ALM_DEG[[i]], p_val_adj < 0.2 & avg_logFC < -log(1.5) &  pct.1 < 0.1 ))
+    
+    if(is.null(always_up)){
+      always_up = up_genes
+    }else{
+      always_up = intersect(always_up,up_genes)
+    }
+    
+  }
+}
+
+cat(always_up)
+
+ALM_neuron_sobj = SetIdent(ALM_neuron_sobj,ident.use = ALM_neuron_sobj@meta.data$cluster)
+
+ae_ALM = AverageExpression(ALM_neuron_sobj)
+ad_ALM = AverageExpression(ALM_neuron_sobj)
+
+ae_ALM = ae_ALM[,grep("ALM",colnames(ae_ALM))]
+
+m = apply(log2(ae_ALM[always_up,]+1),1,max)
+
+
+```
+
+
+```{r}
+ClusGrp11_13_VISp_DEG <- list()
+ClusGrp11_13_VISp_DEG_sig <- list()
+
+for(grp in 1:length(vc_groups)){
+	message(paste("***",grp,"***"))
+	mPFC_clus = vc_groups[[grp]]$PFC
+	visp_clus = vc_groups[[15]]$VISp
+
+	if(length(mPFC_clus)>0 & length(visp_clus)>0){
+
+		pos1 = rownames(subset(PFC_excitatory_saline_sobj@meta.data, L2_clusters %in% mPFC_clus))
+		pos2 = rownames(subset(vc_neurons_sobj@meta.data, cluster %in% visp_clus))
+
+		sobj1 = SubsetData(PFC_excitatory_saline_sobj,cells.use = pos1, subset.raw=T)
+		sobj2 = SubsetData(vc_neurons_sobj,cells.use = pos2, subset.raw=T)
+
+		common_genes = intersect(rownames(sobj1@data), rownames(sobj2@data))
+
+		sce1 = Convert(sobj1, to="sce")
+		sce2 = Convert(sobj2, to="sce")
+
+		sce1 = sce1[common_genes,]
+		sce2 = sce2[common_genes,]
+		out = multiBatchNorm(sce1, sce2)
+		rm(sce1,sce2)
+		sobj_mrg = MergeSeurat(sobj1, sobj2, do.normalize = T,do.scale = T)
+		rm(sobj1,sobj2)
+		sobj_mrg@data = cbind(assay(out[[1]],2),assay(out[[2]],2))
+    sobj_mrg = ScaleData(sobj_mrg)
+		newIdent = c(rep("mPFC",length(pos1)), rep("VISp",length(pos2)))
+		sobj_mrg = SetIdent(sobj_mrg, ident.use = newIdent)
+    
+		ClusGrp11_13_VISp_DEG[[grp]] = FindMarkers(sobj_mrg,test.use = "bimod",ident.1 = "mPFC")
+				
+		de_sig = subset(ClusGrp11_13_VISp_DEG[[grp]], abs(pct.1-pct.2)/max(pct.1,pct.2) > 0.3 & p_val_adj < 1e-5 & abs(avg_logFC) > log(2) )
+		
+		de_sig = de_sig[order(de_sig$avg_logFC,decreasing = T),]
+
+		ClusGrp11_13_VISp_DEG_sig[[grp]] = de_sig			
+	}	
+}	
+
+
+
+
+
+
+
+always_up_Visp <- NULL
+
+for(i in 1:length(ClusGrp11_13_VISp_DEG)){
+  
+  
+  if(!is.null(ClusGrp11_13_VISp_DEG[[i]])){
+    
+    up_genes <- rownames(subset(ClusGrp11_13_VISp_DEG[[i]], p_val_adj < 0.05 & avg_logFC > log(2) ))
+    
+    if(is.null(always_up_Visp)){
+      always_up_Visp = up_genes
+    }else{
+      always_up_Visp = intersect(always_up_Visp,up_genes)
+    }
+    
+  }
+}
+
+cat(t(always_up_Visp))
+```
+
+
+
+

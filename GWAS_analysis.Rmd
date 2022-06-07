@@ -1,0 +1,1380 @@
+---
+title: "GWAS analysis"
+author: "Mohamed Nadhir Djekidel"
+date: "September 3, 2018"
+output: html_document
+---
+
+## load GWAS data
+
+```{r}
+getwd()
+GWAS_associations <- data.table::fread("../../Data/gwas_catalog_v1.0.2-associations_e93_r2018-08-21.tsv")
+
+PFC_disease_GWAS <- list()
+
+pos <- unique(grep("Schizophrenia",GWAS_associations$`DISEASE/TRAIT`,value = T))
+pos2 <-  unique(grep("Bipolar",GWAS_associations$`DISEASE/TRAIT`,value = T))
+pos2 <- grep("schizophrenia",pos2,value = T)
+PFC_disease_GWAS[["Schizophrenia"]] <- subset(GWAS_associations,`DISEASE/TRAIT` %in% c(pos,pos2))
+
+pos <- unique(grep("Depression",GWAS_associations$`DISEASE/TRAIT`,value = T))
+PFC_disease_GWAS[["Depression"]] <- subset(GWAS_associations,`DISEASE/TRAIT` %in% c(pos))
+
+pos <- unique(grep("Addiction",GWAS_associations$`DISEASE/TRAIT`,value = T))
+PFC_disease_GWAS[["Addiction"]] <- subset(GWAS_associations,`DISEASE/TRAIT` %in% c(pos))
+
+
+pos <- unique(grep("^Autism",GWAS_associations$`DISEASE/TRAIT`,value = T))
+PFC_disease_GWAS[["Autism"]] <- subset(GWAS_associations,`DISEASE/TRAIT` %in% c(pos))
+
+
+pos <- unique(grep("^Autism",GWAS_associations$`DISEASE/TRAIT`,value = T))
+PFC_disease_GWAS[["Autism"]] <- subset(GWAS_associations,`DISEASE/TRAIT` %in% c(pos))
+
+
+pos <- unique(grep("attention deficit",GWAS_associations$`DISEASE/TRAIT`,value = T,ignore.case = T))
+PFC_disease_GWAS[["ADHD"]] <- subset(GWAS_associations,`DISEASE/TRAIT` %in% c(pos))
+
+```
+
+```{r}
+require(readxl)
+PFC_disease_GWAS <- list()
+
+GWAS_excel = "GWAS/gwas_catalog_v1.0.2-associations_Diseases Split.xlsx"
+for(sheet in excel_sheets(GWAS_excel)[-1]){
+  
+  print(sheet)
+  sheet_name <- gsub("\"","",sheet)
+  sheet_name <- gsub("\\s+","_",sheet_name)
+  PFC_disease_GWAS[[sheet]] <- as.data.frame(read_excel(GWAS_excel, sheet = sheet))
+}
+```
+
+
+# Convert the list of genes to Mouse gene names
+
+
+```{r}
+require(biomaRt)
+
+PFC_disease_GWAS_genes <- list()
+
+for(disease in names(PFC_disease_GWAS)){
+  tmp_genes <- unique(unlist(strsplit(PFC_disease_GWAS[[disease]]$`REPORTED GENE(S)`,split = ",")))
+  tmp_genes <- gsub("^\\s+","",tmp_genes)
+  tmp_genes <- setdiff(tmp_genes,c("intergenic","NR"))
+  tmp_genes_mouse <- convertHumanGeneList(tmp_genes)
+  PFC_disease_GWAS_genes[[disease]] = tmp_genes_mouse
+}
+```
+
+
+
+
+```{r}
+
+all_cell_inDD_saline_sobj <- SubsetData(all_cell_inDD_sobj,subset.name = "treatment",
+                                         accept.value = "Saline",subset.raw = T)
+
+pos <- match(PFC_excitatory_sobj@cell.names, all_cell_inDD_saline_sobj@cell.names)
+toUse = which(!is.na(pos))
+PFC_excitatory_sobj@meta.data$L1_cluster = paste0("Exc_",PFC_excitatory_sobj@meta.data$L1_cluster)
+
+all_cell_inDD_saline_sobj@meta.data$L1_clusters =all_cell_inDD_saline_sobj@meta.data$L2_clusters
+all_cell_inDD_saline_sobj@meta.data$L1_clusters[pos[toUse]] = PFC_excitatory_sobj@meta.data$L1_cluster[toUse]
+all_cell_inDD_saline_sobj <- SetIdent(all_cell_inDD_saline_sobj, ident.use = all_cell_inDD_saline_sobj@meta.data$L1_clusters)
+
+
+
+#all_cells_AE_expression <-  AverageExpression(all_cell_inDD_saline_sobj)
+all_cells_AE_detection <-  AverageDetectionRate(all_cell_inDD_saline_sobj)
+
+
+all_cell_inDD_saline_sobj = ScaleData(all_cell_inDD_saline_sobj,vars.to.regress = c("nUMI","percent.mito","Sample"))
+
+all_cell_inDD_saline_sobj@spatial@mix.probs = all_cell_inDD_saline_sobj@spatial@mix.probs[all_cell_inDD_saline_sobj@cell.names,1,drop=F]
+
+PFC_disease_GWAS_genes_ae <- list()
+
+for(disease in names(PFC_disease_GWAS_genes)){
+  
+  toUse <- intersect(PFC_disease_GWAS_genes[[disease]], rownames(all_cell_inDD_saline_sobj@data))
+  PFC_disease_GWAS_genes_ae[[disease]] <- all_cells_AE_expression[toUse,]
+  rs = rowSums(PFC_disease_GWAS_genes_ae[[disease]])
+  PFC_disease_GWAS_genes_ae[[disease]] <- PFC_disease_GWAS_genes_ae[[disease]][rs>0,]
+}
+
+
+
+
+
+```
+
+
+
+## Find genes specifically expressed in one cluster
+Use the Shanon-entropy method from the "RNentropy: an entropy-based tool for the detection of significant variation of gene expression across multiple RNA-Seq experiments" paper.
+
+
+
+
+```{r}
+require(SamSPECTRAL)
+PFC_disease_GWAS_genes_association = list()
+
+# all_genes = unique(unlist(PFC_disease_GWAS_genes))
+#     
+# all_genes  = intersect(all_genes, rownames(all_cell_inDD_saline_sobj@data))
+#     
+# all_mrks <- FindAllMarkers_parallel(all_cell_inDD_saline_sobj,genes.use = all_genes,logfc.threshold = 0,
+#                            test.use = "bimod",
+#                            only.pos = TRUE)
+#     
+# 
+# 
+# all_cell_inDD_saline_sobj = KNNSmooth(sobj = all_cell_inDD_saline_sobj,
+#                                       k = 30,
+#                                       reduction.type = "cca.aligned",
+#                                       dims.use = 1:12)
+
+rs = apply(all_cell_inDD_saline_sobj@data,1,max)
+
+all_cell_inDD_saline_sobj@data = all_cell_inDD_saline_sobj@data[rs>0,]
+
+AE_expression = RobustAverageExpression(all_cell_inDD_saline_sobj)
+all_cells_AE_detection <-  AverageDetectionRate(all_cell_inDD_saline_sobj,thresh.min = 0)
+
+#load("FinalObjects/all_mrks.RData")
+
+# PFC_disease_GWAS_genes_association[["e-3"]] = getDiseaseAssociation(PFC_disease_GWAS_genes,
+#                                                                     all_cell_inDD_saline_sobj,
+#                                                                     groups = levels(all_cell_inDD_saline_sobj@ident),
+#                                                                     gpval = 1e-3,
+#                                                                     lpval = 1e-5)
+
+PFC_disease_GWAS_genes$`Drug Abuse` =NULL
+
+PFC_disease_GWAS_genes_association[["e-5"]] = getDiseaseAssociation(PFC_disease_GWAS_genes,
+                          all_cell_inDD_saline_sobj,
+                          groups = levels(all_cell_inDD_saline_sobj@ident),
+                          gpval = 1e-5,
+                          lpval = 0.05, 
+                          perpval = 1e-6,
+                          all_mrks = NULL,
+                          AE_expression = AE_expression,
+                          AE_detection = all_cells_AE_detection)
+
+# PFC_disease_GWAS_genes_association[["e-8"]] = getDiseaseAssociation(PFC_disease_GWAS_genes,
+#                                                                     all_cell_inDD_saline_sobj,
+#                                                                     groups = levels(all_cell_inDD_saline_sobj@ident),
+#                                                                     gpval = 1e-8,
+#                                                                     lpval = 0.01)
+
+
+PFC_disease_GWAS_expressed_classes <- list()
+
+for(disease in names(PFC_disease_GWAS_genes_association[["e-5"]])){
+  print(disease)
+  PFC_disease_GWAS_expressed_classes[["e-5"]][[disease]]= getExpressedClasses2(PFC_disease_GWAS_genes_association[["e-5"]][[disease]])
+}
+
+
+
+dir.create("GWAS",showWarnings = F)
+dir.create("GWAS/FinalAssociation",showWarnings = F)
+
+dir.create("GWAS/FinalAssociation/Heatmaps",showWarnings = F)
+dir.create("GWAS/FinalAssociation/csv",showWarnings = F)
+dir.create("GWAS/FinalAssociation/csv_melted",showWarnings = F)
+
+
+require(reshape2)
+for(disease in names(PFC_disease_GWAS_genes_association[["e-5"]])){
+  
+  fname = paste0("GWAS/FinalAssociation/Heatmaps/",disease,"_heatmap.pdf")
+  
+  gaps = gsub("_\\d+","",colnames(PFC_disease_GWAS_genes_association[["e-5"]][[disease]]))
+  gaps = factor(gaps)
+  gaps = diff(as.numeric(gaps))
+  gaps = which(gaps==1)
+  h = ceiling(nrow(PFC_disease_GWAS_genes_association[["e-5"]][[disease]])/6)
+  h = ifelse(h<4,4,h)
+  #pdf(fname,width =  14,height = h)
+  
+  #touse.genes = unique(subset(PFC_disease_GWAS_expressed_classes[["e-5"]][[disease]], category != "cluster-Specific")$gene)
+  ph= pheatmap::pheatmap(PFC_disease_GWAS_genes_association[["e-5"]][[disease]][touse.genes,],
+                   cluster_cols = F,
+                   gaps_col = gaps,
+                   color = c("royalblue", "orange"),
+                   border_color = "black",
+                   clustering_method = "ward.D2",silent = T)
+  #dev.off()
+
+  
+  fname = paste0("GWAS/FinalAssociation/csv/",disease,"_heatmap.csv")
+  write.csv(PFC_disease_GWAS_genes_association[["e-5"]][[disease]][ph$tree_row$order,], file=fname)
+  
+  tmp =PFC_disease_GWAS_genes_association[["e-5"]][[disease]][ph$tree_row$order,]
+  tmp$gene = rownames(tmp)
+  mlt= melt(tmp)
+  colnames(mlt)= c("gene","cluster","value")
+  fname = paste0("GWAS/FinalAssociation/csv_melted/",disease,"_heatmap.csv")
+  write.csv(mlt, file=fname,row.names = F)
+}
+
+
+
+```
+
+# Get Cluster specific genes
+
+```{r}
+
+PFC_disease_clusterSpecific_GWAS_genes = list()
+
+
+dir.create("GWAS/FinalAssociation/Heatmaps_ClusterSpecific",showWarnings = F)
+for(disease in names(PFC_disease_GWAS_genes_association[["e-5"]])){
+  
+  gaps = gsub("_\\d+","",colnames(PFC_disease_GWAS_genes_association[["e-5"]][[disease]]))
+  gaps = factor(gaps)
+  
+
+  percents = tapply(colnames(PFC_disease_GWAS_genes_association[["e-5"]][[disease]]),gaps,
+                    function(x){
+                      rs = rowSums(PFC_disease_GWAS_genes_association[["e-5"]][[disease]][,x])                          
+                      rs/length(x)
+                    })
+  percents = do.call("rbind",percents)
+  percents = t(percents)
+  
+  mx = apply(percents,1,max)
+  
+  toUse = which(mx <0.5)
+  
+  PFC_disease_clusterSpecific_GWAS_genes[[disease]] = PFC_disease_GWAS_genes_association[["e-5"]][[disease]][toUse,]
+  
+  gaps = diff(as.numeric(gaps))
+  gaps = which(gaps==1)
+  
+  
+  fname = paste0("GWAS/FinalAssociation/Heatmaps_ClusterSpecific/",disease,"_heatmap.pdf")
+  
+  h = ceiling(nrow(PFC_disease_GWAS_genes_association[["e-5"]][[disease]])/6)
+  h = ifelse(h<4,4,h)
+  #pdf(fname,width =  14,height = h)
+  
+  
+  if(length(toUse)>1){
+    
+    higlight = c()
+    if(disease == "Schizophrenia"){
+      higlight=  c("Slc17a6", "Lypd6b", "Zfp804a" , "Zfpm2" )
+    }else{
+      higlight=  c("Zfpm2", "Zfp804a" , "Adamts16", "Myo18b", "Astn2",  "Erbb2","Lypd6b", "Slc17a6")
+    }
+    
+    others = setdiff(rownames(PFC_disease_clusterSpecific_GWAS_genes[[disease]]),higlight)
+    g_ord <- c(higlight,others)
+    
+    pheatmap::pheatmap(PFC_disease_clusterSpecific_GWAS_genes[[disease]][g_ord,],
+                   cluster_cols = F,cluster_rows = F,
+                   gaps_col = gaps,
+                   color = c("royalblue", "orange"),
+                   border_color = "black",
+                   clustering_method = "average")
+  }
+  #dev.off()
+  
+  # Get Non-specific genes
+  
+  touse.genes = setdiff(rownames(PFC_disease_GWAS_genes_association[["e-5"]][[disease]]),
+                        rownames(PFC_disease_clusterSpecific_GWAS_genes[[disease]])
+                        )
+  ph= pheatmap::pheatmap(PFC_disease_GWAS_genes_association[["e-5"]][[disease]][touse.genes,],
+                   cluster_cols = F,
+                   gaps_col = gaps,
+                   color = c("royalblue", "orange"),
+                   border_color = "black",
+                   clustering_method = "average",silent = F)
+  #dev.off()
+  
+}
+
+```
+
+
+# Plot the markers heatmaps
+
+```{r}
+
+for(disease in names(PFC_disease_clusterSpecific_GWAS_genes)){
+  
+   gaps = gsub("_\\d+","",colnames(PFC_disease_GWAS_genes_association[["e-5"]][[disease]]))
+  gaps = factor(gaps)
+  gaps = diff(as.numeric(gaps))
+  gaps = which(gaps==1)
+  
+  borad = setdiff(rownames(PFC_disease_GWAS_genes_association[["e-5"]][[disease]]),rownames(PFC_disease_clusterSpecific_GWAS_genes[[disease]]))
+  
+  
+  pheatmap::pheatmap(PFC_disease_GWAS_genes_association[["e-5"]][[disease]][borad,],
+                   cluster_cols = F,
+                   gaps_col = gaps,
+                   color = c("royalblue", "orange"),
+                   border_color = "black",
+                   clustering_method = "average",show_rownames = F,show_colnames = F)   
+  
+}
+
+```
+
+
+# Plot some markers
+
+```{r}
+
+Schizo_markers <- c("")
+
+```
+
+
+# Get Stats of the cluster specific genes
+
+```{r}
+Total_stats = matrix(0, nrow=length(PFC_disease_GWAS_expressed_classes[["e-5"]]), 
+                     ncol=length(levels(all_cell_inDD_saline_sobj@ident)))
+
+rownames(Total_stats) = names(PFC_disease_GWAS_expressed_classes[["e-5"]])
+colnames(Total_stats) = levels(all_cell_inDD_saline_sobj@ident)
+
+
+for(disease in names(PFC_disease_GWAS_expressed_classes[["e-5"]])){
+  print(disease)
+  
+  tmp = subset(PFC_disease_GWAS_expressed_classes[["e-5"]][[disease]], category %in% c("cellType-specific","cluster-Specific")  )
+  
+  cs = colSums(PFC_disease_GWAS_genes_association[["e-5"]][[disease]][tmp$gene,])
+  cs =cs/nrow(PFC_disease_GWAS_genes_association[["e-5"]][[disease]][tmp$gene,])
+  cs = cs/max(cs)
+  Total_stats[disease,]=cs
+}
+
+PFC_disease_GWAS_expressed_classes$`e-5`$BEHAVIOR=NULL
+PFC_disease_GWAS_expressed_classes$`e-5`$Parkinson=NULL
+PFC_disease_GWAS_expressed_classes$`e-5`$`AdolescenceChildhood aggressive`=NULL
+PFC_disease_GWAS_expressed_classes$`e-5`$Nicotine=NULL
+PFC_disease_GWAS_expressed_classes$`e-5`$`Tourett Syndrome`=NULL
+PFC_disease_GWAS_expressed_classes$`e-5`$`Cocaine Dependence`=NULL
+
+
+tokeep = setdiff(rownames(Total_stats), c("BEHAVIOR","Parkinson","AdolescenceChildhood aggressive","Nicotine","Tourett Syndrome","Cocaine Dependence"))
+
+Total_stats =Total_stats[tokeep,]
+
+
+rownames(Total_stats) = gsub("Obsessive Compulsive Disorder","OCD",rownames(Total_stats))
+rownames(Total_stats) = gsub("Autism-ADHD_but other too","Autism",rownames(Total_stats))
+rownames(Total_stats) = gsub("Alcohol","Alcoholism",rownames(Total_stats))
+rownames(Total_stats) = gsub("Alzheimer and Dementia","Alzheimer & Dementia",rownames(Total_stats))
+
+
+#Total_stats = apply(Total_stats,1,function(x) x/max(x))
+
+
+require(circlize)
+q99=quantile(Total_stats,0.99)
+col_fun = colorRamp2(seq(0,q99,length.out = 100), colorRampPalette(rev(brewer.pal(n = 11, name ="Spectral")))(100))
+
+
+factors = gsub("_\\d+","",colnames(Total_stats))
+
+factors = c("AA",factors)
+
+mat_list = list()
+
+ph =pheatmap(Total_stats)
+
+for(f in unique(factors)[-1]){
+  pos <- which(factors==f)-1
+  
+  mat_list[[f]] = Total_stats[ph$tree_row$order,pos]
+}
+
+Total_stats = Total_stats[ph$tree_row$order,]
+
+
+gaps = gsub("_\\d+","",colnames(Total_stats))
+  gaps = factor(gaps)
+  gaps = diff(as.numeric(gaps))
+  gaps = which(gaps==1)
+
+
+Total_stats2 = Total_stats
+
+Total_stats2[Total_stats2>q99]=q99
+
+
+pheatmap(t(Total_stats2),cluster_rows = F,gaps_row = gaps,color = colorRampPalette(rev(brewer.pal(n = 11, name ="Spectral")))(100))
+
+# Global Distrbution of GWAS candicates accross diff. cell-types
+circos.par(cell.padding = c(0, 0, 0, 0), gap.degree = 5,"start.degree" = 90)
+circos.initialize(factors, xlim = cbind(rep(0, 9), c(12,table(factors)[-1]) ))
+
+circos.track(factors =  sort(unique(factors)), y = runif(9),bg.border = NA,track.height=0.05,
+    panel.fun = function(x, y) {
+      
+       if(CELL_META$sector.index != "AA"){
+          circos.text(CELL_META$xcenter, CELL_META$cell.ylim[2], 
+            CELL_META$sector.index) 
+       }
+        #circos.axis(labels.cex = 0.6)
+})
+
+
+
+circos.track(ylim = c(0, nrow(Total_stats)), bg.border = NA, track.height =0.4,panel.fun = function(x, y) {
+    #browser()
+    print(CELL_META$sector.index)
+    sector.index = CELL_META$sector.index
+    
+    if(sector.index != "AA"){
+      
+      if(sector.index == "Astro"){
+      circos.yaxis(side = "left",
+                   at =  nrow(Total_stats):1-0.5,
+                   labels = rownames(Total_stats),sector.index = sector.index,labels.cex = 1.2)
+      }
+      m = mat_list[[sector.index]]
+      col_mat = col_fun(m)
+      nr = nrow(m)
+      nc = ncol(m)
+      for(i in 1:nr) {
+          circos.rect(1:nc - 1, rep(nr - i, nc), 
+              1:nc, rep(nr - i + 1, nc), 
+              border = "black", col = col_mat[i, ])
+      }
+    }
+    
+})
+
+for(f in sort(unique(factors))){
+  
+  if(f != "AA"){
+    #browser()
+    pos = which(factors==f)-1
+    lbl = strsplit(colnames(Total_stats)[pos],split = "_")
+    lbl = sapply(lbl, function(x) x[2])
+    lbl = as.numeric(lbl)
+    # circos.axis(sector.index = f, h = "bottom", direction = "inside",
+    #             labels = as.character(lbl),
+    #             major.at = lbl-0.5,
+    #             minor.ticks=0,
+    #   labels.facing = "reverse.clockwise",
+    #   labels.pos.adjust=F)    
+  }
+}
+
+
+```
+
+
+
+
+## Count the number expressed genes per-disease
+
+```{r}
+GWAS_Enrichment_stats <- matrix(0,
+                                nrow=length(levels(all_cell_inDD_saline_sobj@ident)),
+                                ncol = length(PFC_disease_GWAS_expressed_classes$`e-5`))
+colnames(GWAS_Enrichment_stats) <- names(PFC_disease_GWAS_expressed_classes$`e-5`)
+rownames(GWAS_Enrichment_stats) <- levels(all_cell_inDD_saline_sobj@ident)
+
+
+for(disease in names(PFC_disease_GWAS_expressed_classes[["e-5"]])){
+  tmp = reshape2::melt(PFC_disease_GWAS_genes_association[['e-5']][[disease]])
+  tmp =subset(tmp, value>0)
+  tmp = table(tmp$Var2)
+  GWAS_Enrichment_stats[names(tmp),disease] = as.numeric(tmp)
+}
+
+```
+
+
+
+
+## Score cells according to their expression of GWAS specific genes
+
+```{r}
+
+all_cell_inDD_saline_sobj@meta.data =  all_cell_inDD_saline_sobj@meta.data[,1:13]
+
+for(disease in names(PFC_disease_GWAS_genes_association$`e-5`)){
+  message(disease)
+  tmp = list()
+  tmp[[disease]] = intersect(PFC_disease_GWAS_genes[[disease]], rownames(all_cell_inDD_saline_sobj@data))
+  
+  
+  all_cell_inDD_saline_sobj = AddModuleScore(all_cell_inDD_saline_sobj,genes.list = tmp,n.bin = 20,enrich.name = disease)
+}
+
+
+bipolar_schizo_genes = list()
+
+bipolar_schizo_genes[["bipolar_specific"]] <- setdiff(PFC_disease_GWAS_genes$Bipolar, PFC_disease_GWAS_genes$Schizophrenia)
+bipolar_schizo_genes[["schizophrenia_specific"]] <- setdiff(PFC_disease_GWAS_genes$Schizophrenia, PFC_disease_GWAS_genes$Bipolar)
+bipolar_schizo_genes[["bipolar_schizo_common"]] = intersect(PFC_disease_GWAS_genes$Schizophrenia, PFC_disease_GWAS_genes$Bipolar)
+
+bipolar_schizo_genes = lapply(bipolar_schizo_genes, function(x){
+  intersect(x,rownames(all_cell_inDD_saline_sobj@data))
+})
+
+for(lst in names(bipolar_schizo_genes)){
+  tmp = list()
+  tmp[[lst]] = bipolar_schizo_genes[[lst]]
+  all_cell_inDD_saline_sobj = AddModuleScore(all_cell_inDD_saline_sobj,
+                                           genes.list = tmp,
+                                           n.bin = 20,
+                                           enrich.name = lst)  
+}
+
+
+
+
+# Merge the data with tSNE
+
+disease_scores_tSNE <- all_cell_inDD_saline_sobj@dr$tsne@cell.embeddings 
+disease_scores_tSNE = cbind(disease_scores_tSNE, all_cell_inDD_saline_sobj@meta.data[,14:34])
+
+disease_scores_tSNE$cluster =all_cell_inDD_saline_sobj@ident
+
+
+disease_scores_tSNE_mlt = reshape2::melt(disease_scores_tSNE, id.vars=c("tSNE_1","tSNE_2","cluster"))
+
+
+disease_scores_tSNE_mlt$CellType = gsub("_\\d+","",disease_scores_tSNE_mlt$cluster)
+
+disease_scores_tSNE_mlt$CellType= factor(as.character(disease_scores_tSNE_mlt$CellType),
+                                         levels = unique(gsub("_\\d+","",levels(disease_scores_tSNE_mlt$cluster))))
+
+tmp = subset(disease_scores_tSNE_mlt, variable %in% c("bipolar_specific1","schizophrenia_specific1","bipolar_schizo_common1"))
+
+ggplot(tmp, aes(x=cluster, y= value, fill=cluster)) + 
+  geom_boxplot() + 
+  geom_hline(yintercept = 0, color="red") + 
+  facet_grid(variable~CellType) + theme_bw() + theme(axis.text.x = element_text(angle = 45, hjust = 1),legend.position = "none") 
+```
+
+
+# Get the number of genes showing some cluster specific distribution
+
+
+
+
+```{r}
+#Avg_express <- RobustAverageExpression(all_cell_inDD_saline_sobj)
+
+enrichment_stats <- data.frame()
+
+PFC_disease_GWAS_expressed_classes$`e-5`$BEHAVIOR=NULL
+PFC_disease_GWAS_expressed_classes$`e-5`$Parkinson=NULL
+PFC_disease_GWAS_expressed_classes$`e-5`$`AdolescenceChildhood aggressive`=NULL
+PFC_disease_GWAS_expressed_classes$`e-5`$Nicotine=NULL
+PFC_disease_GWAS_expressed_classes$`e-5`$`Tourett Syndrome`=NULL
+PFC_disease_GWAS_expressed_classes$`e-5`$`Cocaine Dependence`=NULL
+
+
+
+
+for(disease in names(PFC_disease_GWAS_expressed_classes[["e-5"]])){
+
+  
+  tbl = table(PFC_disease_GWAS_expressed_classes[["e-5"]][[disease]]$category)
+  
+  tbl = as.data.frame(tbl)
+  tbl$disease=disease
+  
+  tbl$percent = tbl$Freq/sum(tbl$Freq)
+  colnames(tbl) = c("type","Freq","disease","percent")
+  
+  # nb_clusterSpecifc = tbl["cluster-Specific"]
+  # nb_CellTypeSpecifc = tbl["cellType-specific"]
+  #nb_nonSpecific = tbl["non-specific"]
+  
+  # nbNonExpressed <- setdiff(PFC_disease_GWAS_genes[[disease]], rownames(all_cell_inDD_saline_sobj@data))
+  # 
+  # ovp =intersect(PFC_disease_GWAS_genes[[disease]], rownames(all_cell_inDD_saline_sobj@data))
+  # 
+  # rs = rowSums(AE_expression[ovp,])
+  # 
+  # zeroexpr = names(rs[rs<=1])
+  # 
+  # nbNonExpressed = unique(c(nbNonExpressed, zeroexpr))
+  # nbNonExpressed = length(nbNonExpressed)
+  # 
+  # nb_nonSpecific = length(PFC_disease_GWAS_genes[[disease]]) - (nb_clusterSpecifc + nb_CellTypeSpecifc + nbNonExpressed)
+  
+   # df = data.frame(disease = disease,
+   #                type=c("cluster-Specific","cellType-specific","non-specific", "non-expressed"),
+   #                
+   #                percent = c(nb_clusterSpecifc,
+   #                            nb_CellTypeSpecifc,
+   #                            nb_nonSpecific, nbNonExpressed)/length(PFC_disease_GWAS_genes[[disease]]))
+  
+  enrichment_stats= rbind(enrichment_stats, tbl)
+}
+
+```
+
+
+# Get the percent of the neuronal and non-neuronal specific genes 
+
+```{r}
+GWAS_enrichment_type = data.frame()
+
+for(disease in names(PFC_disease_GWAS_expressed_classes[['e-5']])){
+
+	tmp = subset(PFC_disease_GWAS_expressed_classes[['e-5']][[disease]], class != "All")
+	tmp$val = 1
+	mat = reshape2::dcast(data=tmp, gene ~ class, fill=0, value.var="val")
+	rownames(mat) <- mat$gene
+	mat$gene =NULL
+	cs = colSums(mat)
+	cs_neuro = cs[intersect(names(cs),c("Exc","Inhib"))]
+	
+	cs_nonNeuro = cs[setdiff(names(cs),c("Exc","Inhib"))]
+
+	df <- data.frame(disease = disease, 
+					 type= c( rep("neuro",length(cs_neuro)), rep("Non-neuro",length(cs_nonNeuro)) ) ,
+					 percent = c(cs_neuro/sum(cs_neuro), cs_nonNeuro/sum(cs_nonNeuro)),
+					 custer= c(names(cs_neuro),names(cs_nonNeuro))
+					 )
+
+  GWAS_enrichment_type <- rbind(GWAS_enrichment_type, df)
+}
+
+GWAS_enrichment_type$custer = factor(GWAS_enrichment_type$custer, levels= c("Exc","Inhib","Endo","Astro","Oligo","NF Oligo","OPC"))
+
+ggplot(GWAS_enrichment_type, aes(x=disease,y=percent,fill=custer)) + geom_bar(stat = "identity") + theme_bw() + facet_grid(type~.) + scale_fill_d3() + theme(axis.text.x = element_text(angle = 50, hjust = 1))
+
+```
+
+
+```{r}
+
+
+dir.create("GWAS",showWarnings = F)
+dir.create("GWAS/Association",showWarnings = F)
+
+dname = "GWAS/Association/"
+
+
+Exc =  grep("Exc_",levels(all_cell_inDD_saline_sobj@ident),value = T)
+Inhib =  grep("Inhib_",levels(all_cell_inDD_saline_sobj@ident),value = T)
+Endo =  grep("Endo_",levels(all_cell_inDD_saline_sobj@ident),value = T)
+Astro =  grep("Astro_",levels(all_cell_inDD_saline_sobj@ident),value = T)
+Oligo =  grep("^Oligo_",levels(all_cell_inDD_saline_sobj@ident),value = T)
+NFOligo =  grep("NF Oligo_",levels(all_cell_inDD_saline_sobj@ident),value = T)
+OPC =  grep("OPC_",levels(all_cell_inDD_saline_sobj@ident),value = T)
+
+col_ord = c(Exc, Inhib, Astro, Endo, OPC,NFOligo,Oligo)
+
+for(cutoffs in names(PFC_disease_GWAS_genes_association)){
+  
+  dir.create(paste0(dname,cutoffs),showWarnings = F)
+  
+  for(disease in names(PFC_disease_GWAS_genes_association[[cutoffs]])){
+    rs = rowSums(PFC_disease_GWAS_genes_association[[cutoffs]][[disease]])
+    
+    fname = paste0(dname,cutoffs,"/",disease,".pdf")
+    
+    
+    h = ifelse(sum(rs>0)/4 < 4,4,sum(rs>0)/4)
+    pdf(fname,width = 8,height = h)
+    pheatmap::pheatmap(PFC_disease_GWAS_genes_association[[cutoffs]][[disease]][rs>0,col_ord],
+               cluster_cols = F,clustering_method = "ward.D", gaps_col = c(13,25,28,35,39,41))
+    dev.off()
+    
+    gnames = rownames(PFC_disease_GWAS_genes_association[[cutoffs]][[disease]])[rs>0]
+    
+    fname = gsub(".pdf","genes.txt",fname)
+    
+    write.table(gnames,file = fname,quote = F,row.names = F,col.names = F)
+  }
+}
+
+  
+```
+
+
+
+
+
+ Plot the specific GWAS genes expression
+
+```{r}
+
+PFC_AE_expression_GWAS_ord <- list()
+
+#dir.create("GWAS",showWarnings = FALSE)
+
+dname = "GWAS/Association/"
+
+for(cutoffs in names(PFC_disease_GWAS_genes_association)){
+  for(disease in names(PFC_disease_GWAS_genes_association[[cutoffs]])){
+    
+    rs = rowSums(PFC_disease_GWAS_genes_association[[cutoffs]][[disease]])
+    
+    ord <- order(rs)
+    fname <- paste0(dname,cutoffs,"/",disease,".csv")
+    
+    if(nrow(PFC_disease_GWAS_genes_association[[cutoffs]][[disease]])>1){
+      ph = pheatmap(PFC_disease_GWAS_genes_association[[cutoffs]][[disease]],cluster_cols = F,clustering_method = "ward.D",silent = T)
+      
+      PFC_AE_expression_GWAS_ord[[disease]] = PFC_disease_GWAS_genes_association[[cutoffs]][[disease]][ph$tree_row$order,col_ord]
+      
+      write.csv(PFC_disease_GWAS_genes_association[[cutoffs]][[disease]][ph$tree_row$order,col_ord],file = fname)  
+    }else{
+      write.csv(PFC_disease_GWAS_genes_association[[cutoffs]][[disease]],file = fname)  
+    }
+  }
+}
+
+```
+
+
+
+# Find the GWAS candidates that are enriched in neuronal and non-neuronal
+
+```{r}
+
+neuro_groups = levels(all_cell_inDD_saline_sobj@ident)
+neuro_groups[!neuro_groups %in% c(Exc, Inhib)] = "Non-neuro"
+neuro_groups[neuro_groups %in% c(Exc, Inhib)] = "Neuro"
+
+# PFC_disease_GWAS_type_association=list()
+# 
+# PFC_disease_GWAS_type_association[["e-5"]] = getDiseaseAssociation(PFC_disease_GWAS_genes,
+#                                                                     all_cell_inDD_saline_sobj,
+#                                                                     groups = neuro_groups,
+#                                                                     gpval = 1e-5,
+#                                                                     lpval = 0.05)
+
+
+dir.create("GWAS/Association/CellType",showWarnings = F)
+
+dname = "GWAS/Association/CellType/"
+
+
+for(cutoffs in names(PFC_disease_GWAS_type_association)){
+  
+  dir.create(paste0(dname,cutoffs),showWarnings = F)
+  
+  for(disease in names(PFC_disease_GWAS_type_association[[cutoffs]])){
+    tmp= PFC_disease_GWAS_type_association[[cutoffs]][[disease]]
+    tmp1= rownames(tmp)[tmp[,1]==1 & tmp[,2]<1]
+    tmp2= rownames(tmp)[tmp[,1]<1 & tmp[,2]==1]
+    
+    gs = c(tmp1,tmp2)
+    
+    if(length(gs)>0){
+      fname = paste0(dname,cutoffs,"/",disease,".pdf")
+      h = ifelse(sum(rs>0)/4 < 4,4,sum(rs>0)/4)
+      pdf(fname,width = 8,height = h)
+      pheatmap(PFC_disease_GWAS_type_association[[cutoffs]][[disease]][gs,],
+                 cluster_cols = F,clustering_method = "ward.D")
+      dev.off()  
+    }
+  }
+}
+
+
+```
+
+
+
+
+
+# Find the GWAS candidates that are enriched in neuronal and non-neuronal
+
+```{r}
+cellTypes_groups = levels(all_cell_inDD_saline_sobj@ident)
+cellTypes_groups[cellTypes_groups %in% Exc] = "Exc"
+cellTypes_groups[cellTypes_groups %in% Inhib] = "Inhib"
+cellTypes_groups[cellTypes_groups %in% Endo] = "Endo"
+cellTypes_groups[cellTypes_groups %in% Astro] = "Astro"
+cellTypes_groups[cellTypes_groups %in% Oligo] = "Oligo"
+cellTypes_groups[cellTypes_groups %in% NFOligo] = "NFOligo"
+cellTypes_groups[cellTypes_groups %in% OPC] = "OPC"
+
+
+PFC_disease_GWAS_L2type_association=list()
+
+PFC_disease_GWAS_L2type_association[["e-5"]] = getDiseaseAssociationByGroup(PFC_disease_GWAS_genes,
+                                                                    all_cell_inDD_saline_sobj,
+                                                                    groups = cellTypes_groups,
+                                                                    gpval = 1e-5,
+                                                                    lpval = 0.05)
+
+
+dir.create("GWAS/Association/L2_CellType",showWarnings = F)
+
+dname = "GWAS/Association/L2_CellType/"
+
+
+l2_col_ord <- c("Exc","Inhib","Astro","Endo","OPC","NFOligo","Oligo")
+
+for(cutoffs in names(PFC_disease_GWAS_L2type_association)){
+  
+  dir.create(paste0(dname,cutoffs),showWarnings = F)
+  
+  for(disease in names(PFC_disease_GWAS_L2type_association[[cutoffs]])){
+    tmp= PFC_disease_GWAS_L2type_association[[cutoffs]][[disease]]
+    #tmp1= rownames(tmp)[tmp[,1]==1 & tmp[,2]<1]
+    #tmp2= rownames(tmp)[tmp[,1]<1 & tmp[,2]==1]
+    #tmp[tmp!=1] = 0
+    tmp[is.na(tmp)] = 0
+    rs = apply(tmp,1,function(x) sum(x>-1,na.rm = T)<3)
+    
+    gs = rownames(tmp)[rs]
+    
+    if(length(gs)>0){
+      colnames(tmp) = gsub("group","", colnames(tmp))
+      fname = paste0(dname,cutoffs,"/",disease,".pdf")
+      h = ifelse(sum(rs>0)/4 < 4,4,sum(rs>0)/4)
+      pdf(fname,width = 8,height = h)
+      
+      pheatmap(tmp[gs,l2_col_ord],
+                 cluster_cols = F,clustering_method = "ward.D")
+      dev.off()  
+    }
+  }
+}
+
+```
+
+
+# Count the number of specific GWAS in each cluster
+
+
+```{r fig.height=5, fig.width=8}
+excitatory_clus = grep("Exc_",colnames(PFC_disease_GWAS_genes_association[["e-5"]][[1]]),value = T)
+Inhib_clus = grep("Inhib_",colnames(PFC_disease_GWAS_genes_association[["e-5"]][[1]]), value = T)
+
+Astro_clus = grep("Astro_",colnames(PFC_disease_GWAS_genes_association[["e-5"]][[1]]), value = T)
+Endo_clus = grep("Endo_",colnames(PFC_disease_GWAS_genes_association[["e-5"]][[1]]), value = T)
+NFO_clus = grep("NF Oligo_",colnames(PFC_disease_GWAS_genes_association[["e-5"]][[1]]), value = T)
+OPC_clus = grep("OPC_",colnames(PFC_disease_GWAS_genes_association[["e-5"]][[1]]), value = T)
+Oligo_clus = grep("groupOligo_",colnames(PFC_disease_GWAS_genes_association[["e-5"]][[1]]), value = T)
+
+
+nbGWAS_meta <- matrix(0,
+                      nrow = length(all_cell_inDD_saline_sobj@cell.names), 
+                      ncol = length(PFC_disease_GWAS_genes_association[["e-5"]]))
+
+colnames(nbGWAS_meta) <- names(PFC_disease_GWAS_genes_association[["e-5"]])
+rownames(nbGWAS_meta) <- all_cell_inDD_saline_sobj@cell.names
+
+PFC_enriched_genes_GWAS_clusters <- list()
+
+for(disease in names(PFC_disease_GWAS_genes_association[["e-5"]])){
+  print(disease)
+  
+  tmp = PFC_disease_GWAS_genes_association[["e-5"]][[disease]]
+  tmp[tmp<0] =0
+  tmp = tmp[rowSums(tmp)>0,]
+  
+  # remove genes that are expressed in neuronal and non-neuronal
+  sum_neuro = rowSums(tmp[,excitatory_clus,Inhib_clus])
+  sum_Nonneuro = rowSums(tmp[,c(Astro_clus,Endo_clus,NFO_clus,OPC_clus,Oligo_clus)])
+  
+  pos <- which(sum_neuro * sum_Nonneuro==0)
+  tmp = tmp[pos,]
+  colnames(tmp) <- gsub("group","",colnames(tmp))
+  enriched_clust  = colSums(tmp)
+  enriched_clust = enriched_clust[enriched_clust>0]
+  
+  
+  for(clus in names(enriched_clust)){
+    cellsInClus = WhichCells(all_cell_inDD_saline_sobj,ident = clus)
+    nbGWAS_meta[cellsInClus,disease] = enriched_clust[clus]
+  }
+}
+
+
+colnames(nbGWAS_meta) <- paste0("Adult_", colnames(nbGWAS_meta))
+
+all_cell_inDD_saline_sobj@meta.data = cbind(all_cell_inDD_saline_sobj@meta.data,nbGWAS_meta)
+
+cols = brewer.pal(5,"Spectral")
+cols
+
+TSNEPlot(all_cell_inDD_saline_sobj, group.by = "Adult_Schizophrenia",
+         #colors.use = c("grey80",brewer.pal(5,"Spectral")),
+         do.label = T)
+```
+
+
+```{r}
+
+
+df_stats = data.frame()
+
+for(disease in c("Schizophrenia","Bipolar")){
+  
+  tmp = PFC_disease_GWAS_genes_association[["e-5"]][[disease]]
+  # tmp[tmp<0] =0
+  # tmp = tmp[rowSums(tmp)>0,]
+  # 
+  # remove genes that are expressed in neuronal and non-neuronal
+  sum_neuro = rowSums(tmp[,c(excitatory_clus,Inhib_clus)])
+  sum_Nonneuro = rowSums(tmp[,c(Astro_clus,Endo_clus,NFO_clus,OPC_clus,Oligo_clus)])
+  
+  #pos <- which(sum_neuro * sum_Nonneuro==0)
+  #tmp = tmp[pos,]
+  
+  sums = colSums(tmp)
+  neuroSum = sum(sums[c(excitatory_clus,Inhib_clus)])
+  
+  NonNeuroSum = sum(sums)  - neuroSum
+  Astro_sum = sum(sums[Astro_clus])/NonNeuroSum
+  Endo_sum = sum(sums[Endo_clus])/NonNeuroSum
+  NFO_sum = sum(sums[NFO_clus])/NonNeuroSum
+  OPC_sum = sum(sums[OPC_clus])/NonNeuroSum
+  Oligo_sum = sum(sums[Oligo_clus])/NonNeuroSum
+  
+  df = data.frame(type= c("Neuro","Neuro","NonNeuro","NonNeuro","NonNeuro","NonNeuro","NonNeuro"),
+                  percent = c(sum(sums[excitatory_clus])/neuroSum,  sum(sums[Inhib_clus])/neuroSum,
+                              Astro_sum, Endo_sum,NFO_sum,OPC_sum,Oligo_sum),
+                  cellType=c("Excitatory","Inhibitory","Astro","Endo","NF Oligo","OPC","Oligo"),
+                  disease=disease
+                  )
+  
+  df_stats = rbind(df_stats, df)
+}
+
+ggplot(df_stats, aes(x=disease, y=percent, fill=cellType)) + geom_bar(stat = "identity", width=0.6, color="black",size=0.5) + theme_bw()+ facet_grid(~type) + ggsci::scale_fill_locuszoom()
+```
+
+```{r}
+
+
+# PFC_Top30_genes_GWAS_clusters <- list()
+# 
+# for(disease in names(PFC_AE_expression_GWAS_ord)){
+#   
+#   print(disease)
+#   
+#   top30 <- head(rownames(PFC_AE_expression_GWAS_ord[[disease]]))
+#   PFC_Top30_genes_GWAS_clusters[[disease]] <- matrix(0, 
+#                                                      nrow = length(top30), 
+#                                                      ncol = ncol(PFC_AE_expression_GWAS_ord[[disease]]))
+#   # get the top 30 genes 
+#   
+#   rownames(PFC_Top30_genes_GWAS_clusters[[disease]]) <- top30
+#   colnames(PFC_Top30_genes_GWAS_clusters[[disease]]) <- colnames(PFC_AE_expression_GWAS_ord[[disease]])
+#   
+#   
+#   # For each gene get the list of enriched cluster
+#   for( gene in top30){
+#     km=kmeans(log2(as.numeric(PFC_AE_expression_GWAS_ord[[disease]][gene,]+1)),centers = 2)   
+#     
+#     clus_to_use <- which.max(km$centers)
+#     
+#     enriched_clus = colnames(PFC_AE_expression_GWAS_ord[[disease]])[km$cluster == clus_to_use]
+#     
+#     pos <- which(all_cell_inDD_saline_sobj@meta.data$L2_clusters %in% enriched_clus)
+#     
+#     
+#     PFC_Top30_genes_GWAS_clusters[[disease]][gene,enriched_clus] = 1
+#     
+#     nbGWAS_meta[pos,disease] = nbGWAS_meta[pos,disease] +1
+#   }
+# }
+# 
+# colnames(nbGWAS_meta) <- paste0('Adult_',colnames(nbGWAS_meta))
+# 
+# old_meta = all_cell_inDD_saline_sobj@meta.data
+# 
+# all_cell_inDD_saline_sobj@meta.data <- cbind(all_cell_inDD_saline_sobj@meta.data, as.data.frame(nbGWAS_meta))
+# 
+
+
+
+```
+
+
+
+```{r}
+#PFC_excitatory_sobj@meta.data <- cbind(PFC_excitatory_sobj@meta.data, as.data.frame(nbGWAS_meta)[PFC_excitatory_sobj@cell.names,])
+
+toUse =intersect(PFC_excitatory_sobj@cell.names, rownames(nbGWAS_meta))
+
+PFC_excitatory_saline_sobj <- SubsetData(PFC_excitatory_sobj,cells.use = toUse,subset.raw = T)
+
+PFC_excitatory_saline_sobj@meta.data <- cbind(PFC_excitatory_saline_sobj@meta.data,
+                                              as.data.frame(nbGWAS_meta)[PFC_excitatory_saline_sobj@cell.names,])
+
+
+dir.create("Excitatory/Excitatory_GWAS/",showWarnings = T)
+
+
+for(disease in colnames(nbGWAS_meta)){
+  dname = gsub("Adult_","",disease)
+  fname=paste0("Excitatory/Excitatory_GWAS/",dname,".pdf")  
+  
+  pdf(fname,width = 6,height = 5)
+  p=TSNEPlot(PFC_excitatory_saline_sobj, group.by = disease,
+         #colors.use = c("grey80",pal_material()(10)[c(2,4,6,8,10)]),
+         colors.use = c("grey80",wes_palette("GrandBudapest1",6,"continuous")),
+         do.label = F,do.return=T) + ggtitle(dname) + theme(plot.title = element_text(hjust = 0.5))
+  print(p)
+  dev.off()
+}
+
+
+```
+
+
+```{r}
+#PFC_excitatory_sobj@meta.data <- cbind(PFC_excitatory_sobj@meta.data, as.data.frame(nbGWAS_meta)[PFC_excitatory_sobj@cell.names,])
+toUse =intersect(PFC_inhibitory_sobj@cell.names, rownames(nbGWAS_meta))
+
+PFC_inhibitory_saline_sobj <- SubsetData(PFC_inhibitory_sobj,cells.use = toUse,subset.raw = T)
+
+PFC_inhibitory_saline_sobj@meta.data <- cbind(PFC_inhibitory_saline_sobj@meta.data,
+                                              as.data.frame(nbGWAS_meta)[PFC_inhibitory_saline_sobj@cell.names,])
+
+
+dir.create("Inhibitory/GWAS",showWarnings = T)
+
+for(disease in colnames(nbGWAS_meta)){
+  dname = gsub("Adult_","",disease)
+  fname=paste0("Inhibitory/GWAS/",dname,".pdf")  
+  
+  pdf(fname,width = 3,height = 2.5)
+  p=TSNEPlot(PFC_inhibitory_saline_sobj, group.by = disease,pt.size = 0.6,
+         #colors.use = c("grey80",pal_material()(10)[c(2,4,6,8,10)]),
+         colors.use = c("grey80",wes_palette("GrandBudapest1",6,"continuous")),
+         do.label = F,do.return=T) + ggtitle(dname) + theme(plot.title = element_text(hjust = 0.5))
+  print(p)
+  dev.off()
+}
+
+```
+
+# Filter Clusters outliers to define a more restricted  convex-hull 
+
+```{r}
+require(ggpubr)
+require(dbscan)
+
+tsne = as.data.frame(all_cell_inDD_saline_sobj@dr$tsne@cell.embeddings)
+tsne$cluster = all_cell_inDD_saline_sobj@meta.data$L2_clusters
+
+# clear tSNE plot
+tsne_filtered <- data.frame()
+
+for(clus in unique(tsne$cluster)){
+  tmp = subset(tsne, cluster == clus)
+  db=dbscan(tmp[,1:2],eps = 0.5,minPts = 3)
+  
+  tmp = tmp[db$cluster!=0,]
+  
+  tsne_filtered <- rbind(tsne_filtered, tmp)
+}
+
+clus_centers <- tsne_filtered %>% group_by(cluster) %>% summarise(tSNE_1 = mean(tSNE_1), tSNE_2=mean(tSNE_2))
+
+
+
+ggplot(tsne, aes(x=tSNE_1, y=tSNE_2, color=cluster)) + geom_point(size=0.5) + 
+  stat_chull(mapping = aes(color=cluster, group=cluster), data = tsne_filtered, color="black", alpha=0.1, geom="polygon") + 
+  theme_bw() + scale_fill_manual(values = generateColors(48)) + scale_color_manual(values = generateColors(48)) +
+  geom_text(mapping = aes(x=tSNE_1, y=tSNE_2,label=cluster), data = clus_centers)
+```
+
+```{r}
+
+hcols = colorRampPalette(pal_material("pink")(10)[-1])(max(nbGWAS_meta))  
+
+dir.create("GWAS/tSNE_hits",showWarnings = F)
+
+for(disease in colnames(nbGWAS_meta)){
+
+  p =TSNEPlot(all_cell_inDD_saline_sobj, 
+              group.by = disease,
+              pt.size = 0.3,
+         colors.use = c("grey80",hcols),
+         do.label = F,do.return=T)+
+    stat_chull(mapping = aes(color=cluster, group=cluster, x=tSNE_1, y=tSNE_2), fill=NA, data = tsne_filtered, color="black", alpha=0.1, geom="polygon") +
+    geom_text_repel(mapping = aes(x=tSNE_1, y=tSNE_2,label=cluster), data = clus_centers)
+  
+  fname= paste0("GWAS/tSNE_hits/",disease,"_hist.pdf")
+  
+  pdf(fname,width = 8,height = 8)
+  print(p)
+  dev.off()
+}
+
+print(p)
+```
+
+
+```{r}
+nbGWAS_meta2 = as.data.frame(nbGWAS_meta)
+nbGWAS_meta2$cluster = all_cell_inDD_saline_sobj@meta.data$L2_clusters
+
+nbGWAS_meta2$cluster <- gsub("Astro_.*","Astro",nbGWAS_meta2$cluster)
+nbGWAS_meta2$cluster <- gsub("Endo_.*","Endo",nbGWAS_meta2$cluster)
+nbGWAS_meta2$cluster <- gsub("NF Oligo_.*","NF Oligo",nbGWAS_meta2$cluster)
+nbGWAS_meta2$cluster <- gsub("^Oligo_.*","Oligo",nbGWAS_meta2$cluster)
+nbGWAS_meta2$cluster <- gsub("OPC_.*","OPC",nbGWAS_meta2$cluster)
+
+nbGWAS_stats <- nbGWAS_meta2 %>% group_by(cluster) %>% summarise_all(max)
+rownames(nbGWAS_stats) <- nbGWAS_stats$cluster
+nbGWAS_stats$cluster = NULL
+
+nbGWAS_stats <- data.matrix(nbGWAS_stats)
+
+
+
+anno = data.frame(cellType = gsub("_.*$","",rownames(nbGWAS_stats)), row.names = rownames(nbGWAS_stats))
+
+anno_cols = list(cellType = pal_npg()(7))
+names(anno_cols$cellType) = unique(anno$cellType)
+
+colnames(nbGWAS_stats) <- gsub("Adult_","", colnames(nbGWAS_stats))
+
+col = colorRampPalette(brewer.pal(n = 9, name ="BuPu"))(max(nbGWAS_stats))
+
+nbGWAS_stats <- nbGWAS_stats[,-c(8,11,15,19)]
+
+lbls = nbGWAS_stats
+
+lbls[lbls==0]=""
+
+# pheatmap(nbGWAS_stats,border_color = "black",display_numbers=lbls,annotation_row = anno, number_color = "black",annotation_colors = anno_cols,cluster_rows = F,color = col)
+
+pheatmap(log2(nbGWAS_stats+1),border_color = "black",
+         display_numbers=lbls,
+         #annotation_row = anno, 
+         number_color = "black",
+         #annotation_colors = anno_cols,
+         cluster_rows = F)
+
+```
+
+```{r}
+for(disease in names(PFC_disease_GWAS_genes)){
+ 
+  print(disease)
+  ex_genes <- head(rownames(PFC_AE_expression_GWAS_ord[[disease]]),15)
+   
+  fname <- paste0("GWAS/",disease,".pdf")
+  pdf(fname,width = 10,height = 10)
+  FeaturePlot(all_cell_inDD_saline_sobj,ex_genes, cols.use = c("grey","#B71B1BFF"),pt.size = 0.3)
+  dev.off()
+}
+```
+
+# Get the expression of the different genes in the different clusters
+
+```{r}
+PFC_excitatory_Saline_sobj <- SubsetData(PFC_excitatory_sobj,subset.name = "treatment",
+                                         accept.value = "Saline",subset.raw = T)
+
+PFC_inhibitory_Saline_sobj <- SubsetData(PFC_inhibitory_sobj,subset.name = "treatment",
+                                         accept.value = "Saline",subset.raw = T)
+
+Excitatory_AE_expression <-  AverageExpression(PFC_excitatory_Saline_sobj)
+Inhibitory_AE_expression <-  AverageExpression(PFC_inhibitory_Saline_sobj)
+
+PFC_disease_GWAS_genes_Excitatory_ae <- list()
+PFC_disease_GWAS_genes_inhibitory_ae <- list()
+
+for(disease in names(PFC_disease_GWAS_genes)){
+  
+  # Excitatory
+  toUse <- intersect(PFC_disease_GWAS_genes[[disease]], rownames(PFC_excitatory_Saline_sobj@data))
+  PFC_disease_GWAS_genes_Excitatory_ae[[disease]] <- Excitatory_AE_expression[toUse,]
+  rs = rowSums(PFC_disease_GWAS_genes_Excitatory_ae[[disease]])
+  PFC_disease_GWAS_genes_Excitatory_ae[[disease]] <- PFC_disease_GWAS_genes_Excitatory_ae[[disease]][rs>0,]
+  
+  # Inihibitory
+  toUse <- intersect(PFC_disease_GWAS_genes[[disease]], rownames(PFC_inhibitory_Saline_sobj@data))
+  PFC_disease_GWAS_genes_inhibitory_ae[[disease]] <- Inhibitory_AE_expression[toUse,]
+  rs = rowSums(PFC_disease_GWAS_genes_inhibitory_ae[[disease]])
+  PFC_disease_GWAS_genes_inhibitory_ae[[disease]] <- PFC_disease_GWAS_genes_inhibitory_ae[[disease]][rs>0,]
+  
+  
+}
+
+```
+
+
+
+## Find genes specifically expressed in one cluster
+Use the Shanon-entropy method from the "RNentropy: an entropy-based tool for the detection of significant variation of gene expression across multiple RNA-Seq experiments" paper.
+
+```{r}
+
+
+PFC_disease_GWAS_genes_Excitatory_entropy_ae <- list()
+PFC_disease_GWAS_genes_inhibitory_entropy_ae <- list()
+
+
+for(disease in names(PFC_disease_GWAS_genes)){
+  
+  
+  PFC_disease_GWAS_genes_Excitatory_entropy_ae[[disease]]  <- apply(PFC_disease_GWAS_genes_Excitatory_ae[[disease]],1,
+                                                                    function(x){
+                                                                      x = log(x+1)
+                                                                      ttot = sum(x)
+                                                                      mu = ttot/length(x)
+                                                                      gsum = x * log(x/mu)
+                                                                      entropy = sum(gsum,na.rm = TRUE)
+                                                                      entropy
+                                                                    })
+  
+  
+  
+  PFC_disease_GWAS_genes_inhibitory_entropy_ae[[disease]]  <- apply(PFC_disease_GWAS_genes_inhibitory_ae[[disease]],1,
+                                                                    function(x){
+                                                                      x = log(x+1)
+                                                                      ttot = sum(x)
+                                                                      mu = ttot/length(x)
+                                                                      gsum = x * log(x/mu)
+                                                                      entropy = sum(gsum,na.rm = TRUE)
+                                                                      entropy
+                                                                    })
+}
+
+```
+
+# Plot the specific GWAS genes expression
+
+```{r}
+# Excitatory_AE_expression <-  AverageExpression(PFC_excitatory_Saline_sobj)
+# Inhibitory_AE_expression <-  AverageExpression(PFC_inhibitory_Saline_sobj)
+
+Excitatory_AE_expression_GWAS <- list()
+Inhibitory_AE_expression_GWAS <- list()
+
+
+dir.create("GWAS",showWarnings = FALSE)
+dir.create("GWAS/Excitatory",showWarnings = FALSE)
+dir.create("GWAS/Inhibitory",showWarnings = FALSE)
+
+for(disease in names(PFC_disease_GWAS_genes)){
+  
+  ord <- names(sort(PFC_disease_GWAS_genes_Excitatory_entropy_ae[[disease]],decreasing = T))
+  Excitatory_AE_expression_GWAS[[disease]] <- Excitatory_AE_expression[ord,]
+  fname <- paste0("GWAS/Excitatory/",disease,".csv")
+  write.csv(Excitatory_AE_expression_GWAS[[disease]],file = fname)
+  
+  
+  
+  ord <- names(sort(PFC_disease_GWAS_genes_inhibitory_entropy_ae[[disease]],decreasing = T))
+  Inhibitory_AE_expression_GWAS[[disease]] <- Inhibitory_AE_expression[ord,]
+  
+  fname <- paste0("GWAS/Inhibitory/",disease,".csv")
+  write.csv(Inhibitory_AE_expression_GWAS[[disease]],file = fname)
+}
+
+```
+
+# Plot the top 5 genes
+
+```{r}
+for(disease in names(PFC_disease_GWAS_genes)){
+ 
+  print(disease)
+  ex_genes <- head(rownames(Excitatory_AE_expression_GWAS[[disease]]))
+   
+  fname <- paste0("GWAS/Excitatory/",disease,".pdf")
+  pdf(fname,width = 6,height = 8)
+  FeaturePlot(PFC_excitatory_sobj,ex_genes, cols.use = c("grey","#B71B1BFF"),pt.size = 0.3)
+  dev.off()
+  
+  
+  fname <- paste0("GWAS/Inhibitory/",disease,".pdf")
+  ex_genes <- head(rownames(Inhibitory_AE_expression_GWAS[[disease]]))
+  pdf(fname,width = 6,height = 6)
+  FeaturePlot(PFC_inhibitory_sobj,ex_genes, cols.use = c("grey","#B71B1BFF"),pt.size = 0.3)
+  dev.off()
+}
+```
+
+
+
+
+```{r}
+enriched_inClus10_unique = list()
+enriched_inClus10_global = list()
+
+for(csv in list.files("D:/Projects/Saline_Cocaine_Morphine_scRNASeq/20170808_PC_PooledAllSamples/PFC_pooledAllBatches_analysis/Clustering_08082018/GWAS/FinalAssociation/csv",full.names = T)){
+  
+  tmp = read.csv(csv, row.names = 1)
+  tmp = data.matrix(tmp)
+  rs = rowSums(tmp)
+  
+  disease = gsub("_heatmap.csv","", basename(csv))
+  enriched_inClus10_unique[[disease]] = c()
+  pos_specific = which(rs<=16 & tmp[,"Exc_10"] ==1)
+  pos_global = which(rs>16 & tmp[,"Exc_10"] == 1)
+  
+  if(length(pos_specific>0)){
+      enriched_inClus10_unique[[disease]] =  rownames(tmp)[pos_specific]
+  }
+  
+  if(length(pos_global>0)){
+    enriched_inClus10_global[[disease]] =  rownames(tmp)[pos_global]
+  }
+}
+```
+
+
+```{r}
+sapply(enriched_inClus10_unique, length)
+```
+
+#write results
+
+```{r}
+dir.create("GWAS/enriched_inClus10/",showWarnings = F)
+dir.create("GWAS/enriched_inClus10/Specific",showWarnings = F)
+
+for(disease in names(enriched_inClus10_unique)){
+  
+  if(length(enriched_inClus10_unique[[disease]])>0){
+    fname = paste0("GWAS/enriched_inClus10/Specific/",disease,"_specific_inClus10.csv")
+    write.csv(enriched_inClus10_unique[[disease]],fname)  
+  }
+}
+
+```
+
+
+```{r}
+sapply(enriched_inClus10_global, length)
+```
+
+```{r}
+dir.create("GWAS/enriched_inClus10/",showWarnings = F)
+dir.create("GWAS/enriched_inClus10/Global",showWarnings = F)
+
+for(disease in names(enriched_inClus10_global)){
+  
+  if(length(enriched_inClus10_global[[disease]])>0){
+    fname = paste0("GWAS/enriched_inClus10/Global/",disease,"_Global_inClus10.csv")
+    write.csv(enriched_inClus10_global[[disease]],fname)  
+  }
+}
+
+```
+
+
+
